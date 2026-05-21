@@ -1,11 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { supabase } from "./lib/supabaseClient";
-
 import {
   ArrowRight,
-  BadgeCheck,
   Box,
-  CheckCircle2,
   CircleDollarSign,
   Headphones,
   Lock,
@@ -16,6 +13,7 @@ import {
   Sparkles,
   Star,
   Truck,
+  Upload,
   Zap
 } from "lucide-react";
 
@@ -110,23 +108,27 @@ const howItWorks = [
   }
 ];
 
-export default function OrionDealerLandingPage() {
-  const [form, setForm] = useState({
-    firstName: "",
-    lastName: "",
-    businessName: "",
-    ffl: "",
-    email: "",
-    phone: "",
-    street: "",
-    city: "",
-    state: "",
-    zip: "",
-    businessType: "",
-    referralSource: "",
-    certified: false
-  });
+const initialForm = {
+  firstName: "",
+  lastName: "",
+  businessName: "",
+  ffl: "",
+  email: "",
+  phone: "",
+  street: "",
+  city: "",
+  state: "",
+  zip: "",
+  businessType: "",
+  referralSource: "",
+  certified: false,
+  fflFile: null,
+  resaleCertificateFile: null,
+  driversLicenseFile: null
+};
 
+export default function OrionDealerLandingPage() {
+  const [form, setForm] = useState(initialForm);
   const [submitStatus, setSubmitStatus] = useState("idle");
   const [submitMessage, setSubmitMessage] = useState("");
 
@@ -150,8 +152,53 @@ export default function OrionDealerLandingPage() {
   }, [form]);
 
   const updateField = (event) => {
-    const { name, value, type, checked } = event.target;
-    setForm((prev) => ({ ...prev, [name]: type === "checkbox" ? checked : value }));
+    const { name, value, type, checked, files } = event.target;
+
+    setForm((prev) => ({
+      ...prev,
+      [name]: type === "checkbox" ? checked : type === "file" ? files?.[0] || null : value
+    }));
+  };
+
+  const uploadDealerDocuments = async (applicationId) => {
+    const uploadedDocs = [
+      { type: "ffl", file: form.fflFile },
+      { type: "resale_certificate", file: form.resaleCertificateFile },
+      { type: "drivers_license", file: form.driversLicenseFile }
+    ];
+
+    for (const doc of uploadedDocs) {
+      if (!doc.file) continue;
+
+      const safeFileName = doc.file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+      const filePath = `${applicationId}/${doc.type}/${Date.now()}-${safeFileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("dealer-documents")
+        .upload(filePath, doc.file, {
+          cacheControl: "3600",
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error(`${doc.type} upload error:`, uploadError);
+        continue;
+      }
+
+      const { error: documentRecordError } = await supabase.from("dealer_documents").insert([
+        {
+          application_id: applicationId,
+          document_type: doc.type,
+          file_path: filePath,
+          file_name: doc.file.name,
+          uploaded_by: form.email.trim()
+        }
+      ]);
+
+      if (documentRecordError) {
+        console.error(`${doc.type} document record error:`, documentRecordError);
+      }
+    }
   };
 
   const handleSubmit = async (event) => {
@@ -176,7 +223,16 @@ export default function OrionDealerLandingPage() {
       status: "new"
     };
 
-    const { error } = await supabase.from("dealer_applications").insert([payload]);
+    const applicationId = crypto.randomUUID();
+
+    const { error } = await supabase
+      .from("dealer_applications")
+      .insert([
+        {
+          id: applicationId,
+          ...payload
+        }
+      ]);
 
     if (error) {
       console.error("Supabase insert error:", error);
@@ -184,6 +240,8 @@ export default function OrionDealerLandingPage() {
       setSubmitMessage("Something went wrong. Please check your connection or contact Orion directly.");
       return;
     }
+
+    await uploadDealerDocuments(applicationId);
 
     const { error: emailError } = await supabase.functions.invoke("send-dealer-confirmation", {
       body: {
@@ -199,20 +257,11 @@ export default function OrionDealerLandingPage() {
 
     setSubmitStatus("success");
     setSubmitMessage("Application submitted successfully. Orion Wholesale will review your dealer request and follow up soon.");
-    setForm({
-      firstName: "",
-      lastName: "",
-      businessName: "",
-      ffl: "",
-      email: "",
-      phone: "",
-      street: "",
-      city: "",
-      state: "",
-      zip: "",
-      businessType: "",
-      referralSource: "",
-      certified: false
+    setForm(initialForm);
+
+    const fileInputs = document.querySelectorAll('input[type="file"]');
+    fileInputs.forEach((input) => {
+      input.value = "";
     });
   };
 
@@ -225,7 +274,10 @@ export default function OrionDealerLandingPage() {
       />
       <div className="fixed inset-0 z-0 bg-black/38" aria-hidden="true" />
       <div className="fixed inset-0 z-0 bg-gradient-to-r from-black/70 via-black/48 to-black/62" aria-hidden="true" />
-      <div className="fixed inset-0 z-0 bg-[radial-gradient(circle_at_25%_20%,rgba(255,255,255,0.06),transparent_25%),radial-gradient(circle_at_70%_25%,rgba(245,190,72,0.08),transparent_28%)]" aria-hidden="true" />
+      <div
+        className="fixed inset-0 z-0 bg-[radial-gradient(circle_at_25%_20%,rgba(255,255,255,0.06),transparent_25%),radial-gradient(circle_at_70%_25%,rgba(245,190,72,0.08),transparent_28%)]"
+        aria-hidden="true"
+      />
 
       <div className="relative z-10 mx-auto max-w-7xl px-5 py-6 sm:px-8 lg:px-10">
         <header className="flex items-center justify-between gap-6">
@@ -236,7 +288,6 @@ export default function OrionDealerLandingPage() {
             <a href="#benefits" className="transition hover:text-amber-300">Benefits</a>
             <a href="#custom-shop" className="transition hover:text-amber-300">Custom Shop</a>
             <a href="#how-it-works" className="transition hover:text-amber-300">How It Works</a>
-            <a href="#faq" className="transition hover:text-amber-300">FAQ</a>
             <a href="#apply" className="rounded-md border border-amber-400 px-5 py-3 font-bold text-amber-300 transition hover:bg-amber-400 hover:text-black">Apply Now</a>
           </nav>
         </header>
@@ -280,7 +331,7 @@ export default function OrionDealerLandingPage() {
             <div className="mt-4 h-0.5 w-16 bg-amber-400" />
           </div>
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-            {whyChoose.map((item, index) => (
+            {whyChoose.map((item) => (
               <div key={item.title} className="border-white/15 lg:border-r lg:pr-8 last:border-r-0">
                 <item.icon className="h-10 w-10 text-amber-300" />
                 <h3 className="mt-4 font-black">{item.title}</h3>
@@ -365,7 +416,7 @@ function ApplicationForm({ form, completion, submitStatus, submitMessage, onChan
         <Select hideLabel label="State" name="state" value={form.state} onChange={onChange} required>
           <option value="">State</option>
           {[
-            "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
+            "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
           ].map((state) => <option key={state}>{state}</option>)}
         </Select>
         <Input hideLabel label="ZIP Code" name="zip" value={form.zip} onChange={onChange} placeholder="ZIP Code" required />
@@ -390,6 +441,22 @@ function ApplicationForm({ form, completion, submitStatus, submitMessage, onChan
         <option>Social Media</option>
         <option>Other</option>
       </Select>
+
+      <div className="mt-6 rounded-lg border border-white/10 bg-white/[0.03] p-4">
+        <div className="flex items-start gap-3">
+          <Upload className="mt-1 h-6 w-6 shrink-0 text-amber-300" />
+          <div>
+            <h3 className="font-black text-amber-300">Upload Dealer Documents</h3>
+            <p className="mt-1 text-sm leading-6 text-white/60">
+              Upload your FFL, resale certificate, and driver’s license if available. PDF, JPG, and PNG files are accepted.
+            </p>
+          </div>
+        </div>
+
+        <FileInput label="FFL PDF or Image" name="fflFile" onChange={onChange} />
+        <FileInput label="Resale Certificate" name="resaleCertificateFile" onChange={onChange} />
+        <FileInput label="Driver’s License" name="driversLicenseFile" onChange={onChange} />
+      </div>
 
       <div className="mt-6 rounded-lg border border-white/10 bg-white/[0.03] p-4">
         <div className="flex gap-4">
@@ -451,6 +518,21 @@ function Input({ label, name, value, onChange, type = "text", placeholder = "", 
   );
 }
 
+function FileInput({ label, name, onChange }) {
+  return (
+    <label className="mt-4 block">
+      <span className="mb-2 block text-sm font-bold text-white">{label}</span>
+      <input
+        type="file"
+        name={name}
+        onChange={onChange}
+        accept=".pdf,.jpg,.jpeg,.png"
+        className="w-full rounded-sm border border-white/14 bg-white/[0.075] px-4 py-3 text-sm text-white file:mr-4 file:rounded file:border-0 file:bg-amber-400 file:px-4 file:py-2 file:font-bold file:text-black"
+      />
+    </label>
+  );
+}
+
 function Select({ label, name, value, onChange, required = false, hideLabel = false, children }) {
   return (
     <label className="mt-4 block">
@@ -467,4 +549,5 @@ function Select({ label, name, value, onChange, required = false, hideLabel = fa
     </label>
   );
 }
+
 
