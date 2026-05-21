@@ -223,16 +223,13 @@ export default function OrionDealerLandingPage() {
       status: "new"
     };
 
-    const applicationId = crypto.randomUUID();
-
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("dealer_applications")
-      .insert([
-        {
-          id: applicationId,
-          ...payload
-        }
-      ]);
+      .insert([payload])
+      .select("id")
+      .single();
+
+    const applicationId = data?.id;
 
     if (error) {
       console.error("Supabase insert error:", error);
