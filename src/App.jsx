@@ -1,10 +1,16 @@
 import React, { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { track } from "@vercel/analytics";
 import { supabase } from "./lib/supabaseClient";
 import {
   ArrowRight,
   Box,
+  Boxes,
+  Briefcase,
+  CheckCircle2,
   CircleDollarSign,
   Headphones,
+  Loader2,
   Lock,
   Paintbrush,
   Palette,
@@ -45,14 +51,14 @@ const whyChoose = [
     text: "Thousands of in-stock items ready to ship when you need them."
   },
   {
-    icon: CircleDollarSign,
-    title: "Unbeatable Pricing",
-    text: "Volume discounts and tiered pricing designed for your bottom line."
+    icon: Boxes,
+    title: "Drop Shipping",
+    text: "Connect your store to our inventory for seamless fulfillment."
   },
   {
     icon: ShoppingCart,
-    title: "Easy Online Ordering",
-    text: "Our portal makes ordering fast, simple, and efficient."
+    title: "Easy Ordering",
+    text: "Talk with a Rep or order online. Simple, and efficient."
   },
   {
     icon: Truck,
@@ -167,6 +173,8 @@ export default function OrionDealerLandingPage() {
       { type: "drivers_license", file: form.driversLicenseFile }
     ];
 
+    const uploaded = [];
+
     for (const doc of uploadedDocs) {
       if (!doc.file) continue;
 
@@ -198,7 +206,11 @@ export default function OrionDealerLandingPage() {
       if (documentRecordError) {
         console.error(`${doc.type} document record error:`, documentRecordError);
       }
+
+      uploaded.push({ type: doc.type, path: filePath });
     }
+
+    return uploaded;
   };
 
   const handleSubmit = async (event) => {
@@ -223,28 +235,36 @@ export default function OrionDealerLandingPage() {
       status: "new"
     };
 
-    const { data, error } = await supabase
-      .from("dealer_applications")
-      .insert([payload])
-      .select("id")
-      .single();
+    const applicationId = crypto.randomUUID();
 
-    const applicationId = data?.id;
+    const { error } = await supabase
+      .from("dealer_applications")
+      .insert([{ id: applicationId, ...payload }]);
 
     if (error) {
       console.error("Supabase insert error:", error);
+      track("dealer_form_submit_error", { reason: "insert_failed" });
       setSubmitStatus("error");
       setSubmitMessage("Something went wrong. Please check your connection or contact Orion directly.");
       return;
     }
 
-    await uploadDealerDocuments(applicationId);
+    const documents = await uploadDealerDocuments(applicationId);
 
     const { error: emailError } = await supabase.functions.invoke("send-dealer-confirmation", {
       body: {
         firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
         email: form.email.trim(),
-        businessName: form.businessName.trim()
+        businessName: form.businessName.trim(),
+        phone: form.phone.trim(),
+        ffl: form.ffl.trim(),
+        street: form.street.trim(),
+        city: form.city.trim(),
+        state: form.state.trim(),
+        zip: form.zip.trim(),
+        businessType: form.businessType,
+        documents
       }
     });
 
@@ -252,14 +272,20 @@ export default function OrionDealerLandingPage() {
       console.error("Confirmation email error:", emailError);
     }
 
+    track("dealer_form_submit_success");
     setSubmitStatus("success");
-    setSubmitMessage("Application submitted successfully. Orion Wholesale will review your dealer request and follow up soon.");
+    setSubmitMessage("");
     setForm(initialForm);
 
     const fileInputs = document.querySelectorAll('input[type="file"]');
     fileInputs.forEach((input) => {
       input.value = "";
     });
+  };
+
+  const resetForm = () => {
+    setSubmitStatus("idle");
+    setSubmitMessage("");
   };
 
   return (
@@ -276,34 +302,36 @@ export default function OrionDealerLandingPage() {
         aria-hidden="true"
       />
 
-      <div className="relative z-10 mx-auto max-w-7xl px-5 py-6 sm:px-8 lg:px-10">
-        <header className="flex items-center justify-between gap-6">
+      <div className="relative z-10 mx-auto max-w-7xl px-4 py-5 sm:px-8 sm:py-6 lg:px-10">
+        <header className="flex items-center justify-between gap-4">
           <a href="#top" className="inline-flex items-center">
-            <img src={logoImage} alt="Orion Wholesale" className="h-14 w-auto object-contain sm:h-16" />
+            <img src={logoImage} alt="Orion Wholesale" className="h-11 w-auto object-contain sm:h-16" />
           </a>
           <nav className="hidden items-center gap-9 text-sm font-medium text-white/85 md:flex">
             <a href="#benefits" className="transition hover:text-amber-300">Benefits</a>
             <a href="#custom-shop" className="transition hover:text-amber-300">Custom Shop</a>
             <a href="#how-it-works" className="transition hover:text-amber-300">How It Works</a>
+            <Link to="/careers" className="transition hover:text-amber-300">Careers</Link>
             <a href="#apply" className="rounded-md border border-amber-400 px-5 py-3 font-bold text-amber-300 transition hover:bg-amber-400 hover:text-black">Apply Now</a>
           </nav>
+          <a href="#apply" className="rounded-md border border-amber-400 px-3 py-2 text-xs font-bold text-amber-300 md:hidden">Apply</a>
         </header>
 
-        <section id="top" className="grid min-h-[calc(100vh-110px)] items-center gap-10 pb-10 pt-8 lg:grid-cols-[1.08fr_0.92fr] lg:gap-14 lg:pb-12 lg:pt-10">
+        <section id="top" className="grid items-center gap-10 pb-10 pt-6 sm:pt-8 lg:min-h-[calc(100vh-110px)] lg:grid-cols-[1.08fr_0.92fr] lg:gap-14 lg:pb-12 lg:pt-10">
           <div className="flex flex-col justify-center">
-            <p className="mb-5 text-sm font-bold uppercase tracking-[0.18em] text-amber-300">Join the Orion Network</p>
-            <h1 className="max-w-2xl text-4xl font-black leading-[0.98] tracking-tight sm:text-6xl lg:text-7xl">
+            <p className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-amber-300 sm:mb-5 sm:text-sm">Join the Orion Network</p>
+            <h1 className="max-w-2xl text-3xl font-black leading-[1.05] tracking-tight sm:text-6xl lg:text-7xl">
               Become an Orion Wholesale Dealer
             </h1>
-            <p className="mt-7 max-w-2xl text-xl leading-8 text-white/85">
+            <p className="mt-5 max-w-2xl text-base leading-7 text-white/85 sm:mt-7 sm:text-xl sm:leading-8">
               Exclusive pricing, custom solutions, and dedicated support to help qualified dealers grow their business.
             </p>
 
-            <div className="mt-12 grid max-w-2xl gap-7 sm:grid-cols-3">
+            <div className="mt-8 grid max-w-2xl gap-6 sm:mt-12 sm:grid-cols-3 sm:gap-7">
               {dealerBenefits.map((item) => (
                 <div key={item.title} className="group">
-                  <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-400/70 text-amber-300 transition group-hover:bg-amber-400 group-hover:text-black">
-                    <item.icon className="h-7 w-7" />
+                  <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl border border-amber-400/70 text-amber-300 transition group-hover:bg-amber-400 group-hover:text-black sm:mb-4 sm:h-12 sm:w-12">
+                    <item.icon className="h-6 w-6 sm:h-7 sm:w-7" />
                   </div>
                   <h3 className="font-bold">{item.title}</h3>
                   <p className="mt-2 text-sm leading-6 text-white/70">{item.text}</p>
@@ -319,6 +347,7 @@ export default function OrionDealerLandingPage() {
             submitMessage={submitMessage}
             onChange={updateField}
             onSubmit={handleSubmit}
+            onReset={resetForm}
           />
         </section>
 
@@ -379,22 +408,70 @@ export default function OrionDealerLandingPage() {
             ))}
           </div>
         </section>
+
+        <section id="careers-cta" className="mt-6 mb-12 rounded-xl border border-white/15 bg-gradient-to-br from-black/60 to-black/30 p-6 shadow-2xl shadow-black/30 backdrop-blur-md sm:p-10">
+          <div className="grid items-center gap-6 sm:grid-cols-[auto_1fr_auto]">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-400/70 text-amber-300">
+              <Briefcase className="h-7 w-7" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-black sm:text-3xl">Looking for a career at Orion?</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/75 sm:text-base sm:leading-7">
+                We&apos;re hiring across sales, fulfillment, and the custom shop. Browse open roles and apply directly.
+              </p>
+            </div>
+            <Link
+              to="/careers"
+              onClick={() => track("candidate_cta_click", { location: "landing_footer" })}
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-gradient-to-r from-amber-300 to-amber-500 px-6 py-4 font-black uppercase tracking-wide text-black shadow-lg shadow-amber-500/20 transition hover:from-amber-200 hover:to-amber-400 sm:py-3"
+            >
+              View Open Roles <ArrowRight className="h-5 w-5" />
+            </Link>
+          </div>
+        </section>
+
+        <footer className="border-t border-white/10 py-6 text-center text-xs text-white/50">
+          <p>&copy; {new Date().getFullYear()} Orion Wholesale. All rights reserved.</p>
+        </footer>
       </div>
     </main>
   );
 }
 
-function ApplicationForm({ form, completion, submitStatus, submitMessage, onChange, onSubmit }) {
+function ApplicationForm({ form, completion, submitStatus, submitMessage, onChange, onSubmit, onReset }) {
+  if (submitStatus === "success") {
+    return (
+      <div id="apply" className="rounded-xl border border-emerald-400/60 bg-black/70 p-6 shadow-2xl shadow-black/50 backdrop-blur-xl sm:p-10">
+        <div className="flex flex-col items-center text-center">
+          <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full border border-emerald-400 bg-emerald-500/10 text-emerald-300">
+            <CheckCircle2 className="h-9 w-9" />
+          </div>
+          <h2 className="text-2xl font-black sm:text-3xl">Application Received</h2>
+          <p className="mt-3 max-w-md text-white/80">
+            Thanks for applying to Orion Wholesale. We&apos;ve sent a confirmation to your email and our team will review your FFL details and follow up shortly.
+          </p>
+          <button
+            type="button"
+            onClick={onReset}
+            className="mt-7 inline-flex items-center gap-2 rounded-md border border-amber-400 px-5 py-3 text-sm font-black uppercase tracking-wide text-amber-300 transition hover:bg-amber-400 hover:text-black"
+          >
+            Submit another application
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <form id="apply" onSubmit={onSubmit} className="max-h-[calc(100vh-140px)] overflow-y-auto rounded-xl border border-amber-400/60 bg-black/68 p-6 shadow-2xl shadow-black/50 backdrop-blur-xl sm:p-8">
+    <form id="apply" onSubmit={onSubmit} className="rounded-xl border border-amber-400/60 bg-black/68 p-5 shadow-2xl shadow-black/50 backdrop-blur-xl sm:p-8 lg:max-h-[calc(100vh-140px)] lg:overflow-y-auto">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-3xl font-black">Dealer Account Application</h2>
-          <p className="mt-3 text-white/78">Please complete the form below to apply for an Orion Wholesale dealer account.</p>
+          <h2 className="text-2xl font-black sm:text-3xl">Dealer Account Application</h2>
+          <p className="mt-3 text-sm text-white/78 sm:text-base">Please complete the form below to apply for an Orion Wholesale dealer account.</p>
         </div>
-        <div className="hidden rounded-md border border-white/15 bg-white/5 px-3 py-2 text-center sm:block">
-          <p className="text-xl font-black text-amber-300">{completion}%</p>
-          <p className="text-[11px] uppercase tracking-wide text-white/50">complete</p>
+        <div className="shrink-0 rounded-md border border-white/15 bg-white/5 px-3 py-2 text-center">
+          <p className="text-lg font-black text-amber-300 sm:text-xl">{completion}%</p>
+          <p className="text-[10px] uppercase tracking-wide text-white/50 sm:text-[11px]">complete</p>
         </div>
       </div>
 
@@ -478,8 +555,8 @@ function ApplicationForm({ form, completion, submitStatus, submitMessage, onChan
         </label>
       </div>
 
-      {submitMessage && (
-        <div className={`mt-5 rounded-md border px-4 py-3 text-sm font-semibold ${submitStatus === "success" ? "border-emerald-400/50 bg-emerald-500/10 text-emerald-200" : "border-red-400/50 bg-red-500/10 text-red-200"}`}>
+      {submitMessage && submitStatus === "error" && (
+        <div className="mt-5 rounded-md border border-red-400/50 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200">
           {submitMessage}
         </div>
       )}
@@ -489,7 +566,15 @@ function ApplicationForm({ form, completion, submitStatus, submitMessage, onChan
         disabled={submitStatus === "loading"}
         className="mt-5 flex w-full items-center justify-center gap-2 rounded-md bg-gradient-to-r from-amber-300 to-amber-500 px-6 py-4 font-black uppercase tracking-wide text-black shadow-lg shadow-amber-500/20 transition hover:from-amber-200 hover:to-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {submitStatus === "loading" ? "Submitting..." : "Submit Application"} <ArrowRight className="h-5 w-5" />
+        {submitStatus === "loading" ? (
+          <>
+            <Loader2 className="h-5 w-5 animate-spin" /> Submitting...
+          </>
+        ) : (
+          <>
+            Submit Application <ArrowRight className="h-5 w-5" />
+          </>
+        )}
       </button>
       <p className="mt-4 flex items-center justify-center gap-2 text-center text-xs text-white/55">
         <Lock className="h-3.5 w-3.5 text-amber-300" /> Your information is secure and will not be shared.
