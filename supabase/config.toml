@@ -423,3 +423,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/send-candidate-confirmation/deno.json"
 entrypoint = "./functions/send-candidate-confirmation/index.ts"
+
+[functions.send-dealer-status-update]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-dealer-status-update/deno.json"
+entrypoint = "./functions/send-dealer-status-update/index.ts"

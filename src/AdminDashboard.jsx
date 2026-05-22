@@ -175,6 +175,8 @@ export default function AdminDashboard() {
 
     setSaving(true);
 
+    const priorStatus = selectedApp.status || "new";
+
     const { data, error } = await supabase
       .from("dealer_applications")
       .update(updates)
@@ -190,6 +192,26 @@ export default function AdminDashboard() {
     }
 
     await logActivity(selectedApp.id, actionLabel, JSON.stringify(updates));
+
+    const newStatus = data?.status;
+    if ((newStatus === "approved" || newStatus === "denied") && newStatus !== priorStatus) {
+      const { error: emailError } = await supabase.functions.invoke("send-dealer-status-update", {
+        body: {
+          firstName: data.first_name,
+          businessName: data.business_name,
+          businessEmail: data.business_email,
+          status: newStatus
+        }
+      });
+
+      if (emailError) {
+        console.error("Status update email error:", emailError);
+        await logActivity(selectedApp.id, "Status email failed to send", String(emailError?.message || emailError));
+      } else {
+        await logActivity(selectedApp.id, `Sent ${newStatus} email to dealer`, data.business_email);
+      }
+    }
+
     setSelectedApp(data);
     await fetchApplications();
     await fetchActivity(selectedApp.id);
