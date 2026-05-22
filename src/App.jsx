@@ -19,7 +19,6 @@ import {
   Sparkles,
   Star,
   Truck,
-  Upload,
   Zap
 } from "lucide-react";
 
@@ -116,21 +115,12 @@ const howItWorks = [
 
 const initialForm = {
   firstName: "",
-  lastName: "",
   businessName: "",
-  ffl: "",
   email: "",
   phone: "",
-  street: "",
-  city: "",
-  state: "",
-  zip: "",
-  businessType: "",
-  referralSource: "",
-  certified: false,
-  fflFile: null,
-  resaleCertificateFile: null,
-  driversLicenseFile: null
+  locationType: "",
+  multipleLocations: "",
+  certified: false
 };
 
 export default function OrionDealerLandingPage() {
@@ -139,78 +129,18 @@ export default function OrionDealerLandingPage() {
   const [submitMessage, setSubmitMessage] = useState("");
 
   const completion = useMemo(() => {
-    const required = [
-      "firstName",
-      "lastName",
-      "businessName",
-      "ffl",
-      "email",
-      "phone",
-      "street",
-      "city",
-      "state",
-      "zip",
-      "businessType",
-      "referralSource"
-    ];
+    const required = ["firstName", "businessName", "email", "phone", "locationType", "multipleLocations"];
     const filled = required.filter((key) => form[key]?.trim()).length;
     return Math.round((filled / required.length) * 100);
   }, [form]);
 
   const updateField = (event) => {
-    const { name, value, type, checked, files } = event.target;
+    const { name, value, type, checked } = event.target;
 
     setForm((prev) => ({
       ...prev,
-      [name]: type === "checkbox" ? checked : type === "file" ? files?.[0] || null : value
+      [name]: type === "checkbox" ? checked : value
     }));
-  };
-
-  const uploadDealerDocuments = async (applicationId) => {
-    const uploadedDocs = [
-      { type: "ffl", file: form.fflFile },
-      { type: "resale_certificate", file: form.resaleCertificateFile },
-      { type: "drivers_license", file: form.driversLicenseFile }
-    ];
-
-    const uploaded = [];
-
-    for (const doc of uploadedDocs) {
-      if (!doc.file) continue;
-
-      const safeFileName = doc.file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-      const filePath = `${applicationId}/${doc.type}/${Date.now()}-${safeFileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("dealer-documents")
-        .upload(filePath, doc.file, {
-          cacheControl: "3600",
-          upsert: false
-        });
-
-      if (uploadError) {
-        console.error(`${doc.type} upload error:`, uploadError);
-        continue;
-      }
-
-      const { error: documentRecordError } = await supabase.from("dealer_documents").insert([
-        {
-          application_id: applicationId,
-          document_type: doc.type,
-          file_path: filePath,
-          file_name: doc.file.name,
-          uploaded_by: form.email.trim()
-        }
-      ]);
-
-      if (documentRecordError) {
-        console.error(`${doc.type} document record error:`, documentRecordError);
-      }
-
-      uploaded.push({ type: doc.type, path: filePath });
-    }
-
-    return uploaded;
   };
 
   const handleSubmit = async (event) => {
@@ -220,17 +150,11 @@ export default function OrionDealerLandingPage() {
 
     const payload = {
       first_name: form.firstName.trim(),
-      last_name: form.lastName.trim(),
       business_name: form.businessName.trim(),
-      ffl_number: form.ffl.trim(),
       business_email: form.email.trim(),
       phone_number: form.phone.trim(),
-      street_address: form.street.trim(),
-      city: form.city.trim(),
-      state: form.state.trim(),
-      zip_code: form.zip.trim(),
-      business_type: form.businessType,
-      referral_source: form.referralSource,
+      location_type: form.locationType,
+      multiple_locations: form.multipleLocations === "Yes",
       certified_ffl: form.certified,
       status: "new"
     };
@@ -249,22 +173,14 @@ export default function OrionDealerLandingPage() {
       return;
     }
 
-    const documents = await uploadDealerDocuments(applicationId);
-
     const { error: emailError } = await supabase.functions.invoke("send-dealer-confirmation", {
       body: {
         firstName: form.firstName.trim(),
-        lastName: form.lastName.trim(),
         email: form.email.trim(),
         businessName: form.businessName.trim(),
         phone: form.phone.trim(),
-        ffl: form.ffl.trim(),
-        street: form.street.trim(),
-        city: form.city.trim(),
-        state: form.state.trim(),
-        zip: form.zip.trim(),
-        businessType: form.businessType,
-        documents
+        locationType: form.locationType,
+        multipleLocations: form.multipleLocations
       }
     });
 
@@ -276,11 +192,6 @@ export default function OrionDealerLandingPage() {
     setSubmitStatus("success");
     setSubmitMessage("");
     setForm(initialForm);
-
-    const fileInputs = document.querySelectorAll('input[type="file"]');
-    fileInputs.forEach((input) => {
-      input.value = "";
-    });
   };
 
   const resetForm = () => {
@@ -475,62 +386,22 @@ function ApplicationForm({ form, completion, submitStatus, submitMessage, onChan
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Input label="First Name" name="firstName" value={form.firstName} onChange={onChange} required />
-        <Input label="Last Name" name="lastName" value={form.lastName} onChange={onChange} required />
-      </div>
+      <Input label="First Name" name="firstName" value={form.firstName} onChange={onChange} required />
       <Input label="Business Name" name="businessName" value={form.businessName} onChange={onChange} required />
-      <Input label="FFL Number" name="ffl" value={form.ffl} onChange={onChange} placeholder="XX-XXX-XX-XX-XXXXX" required />
       <Input label="Business Email" name="email" type="email" value={form.email} onChange={onChange} placeholder="you@business.com" required />
       <Input label="Phone Number" name="phone" type="tel" value={form.phone} onChange={onChange} placeholder="(000) 000-0000" required />
-      <Input label="Business Address" name="street" value={form.street} onChange={onChange} placeholder="Street Address" required />
 
-      <div className="grid gap-3 sm:grid-cols-[1fr_0.7fr_0.7fr]">
-        <Input hideLabel label="City" name="city" value={form.city} onChange={onChange} placeholder="City" required />
-        <Select hideLabel label="State" name="state" value={form.state} onChange={onChange} required>
-          <option value="">State</option>
-          {[
-            "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
-          ].map((state) => <option key={state}>{state}</option>)}
-        </Select>
-        <Input hideLabel label="ZIP Code" name="zip" value={form.zip} onChange={onChange} placeholder="ZIP Code" required />
-      </div>
-
-      <Select label="Business Type" name="businessType" value={form.businessType} onChange={onChange} required>
-        <option value="">Select Business Type</option>
-        <option>Retail Gun Shop</option>
-        <option>Range or Training Facility</option>
-        <option>Online FFL Dealer</option>
-        <option>Outdoor / Hunting Retailer</option>
-        <option>Law Enforcement Supply</option>
-        <option>Other</option>
-      </Select>
-
-      <Select label="How did you hear about Orion Wholesale?" name="referralSource" value={form.referralSource} onChange={onChange} required>
+      <Select label="Is your business a storefront or home-based?" name="locationType" value={form.locationType} onChange={onChange} required>
         <option value="">Select an option</option>
-        <option>Sales Representative</option>
-        <option>Referral</option>
-        <option>Trade Show</option>
-        <option>Search Engine</option>
-        <option>Social Media</option>
-        <option>Other</option>
+        <option>Storefront</option>
+        <option>Home-Based</option>
       </Select>
 
-      <div className="mt-6 rounded-lg border border-white/10 bg-white/[0.03] p-4">
-        <div className="flex items-start gap-3">
-          <Upload className="mt-1 h-6 w-6 shrink-0 text-amber-300" />
-          <div>
-            <h3 className="font-black text-amber-300">Upload Dealer Documents</h3>
-            <p className="mt-1 text-sm leading-6 text-white/60">
-              Upload your FFL, resale certificate, and driver’s license if available. PDF, JPG, and PNG files are accepted.
-            </p>
-          </div>
-        </div>
-
-        <FileInput label="FFL PDF or Image" name="fflFile" onChange={onChange} />
-        <FileInput label="Resale Certificate" name="resaleCertificateFile" onChange={onChange} />
-        <FileInput label="Driver’s License" name="driversLicenseFile" onChange={onChange} />
-      </div>
+      <Select label="Do you have multiple locations?" name="multipleLocations" value={form.multipleLocations} onChange={onChange} required>
+        <option value="">Select an option</option>
+        <option>Yes</option>
+        <option>No</option>
+      </Select>
 
       <div className="mt-6 rounded-lg border border-white/10 bg-white/[0.03] p-4">
         <div className="flex gap-4">
@@ -595,21 +466,6 @@ function Input({ label, name, value, onChange, type = "text", placeholder = "", 
         placeholder={placeholder || label}
         required={required}
         className="w-full rounded-sm border border-white/14 bg-white/[0.075] px-4 py-3 text-white outline-none transition placeholder:text-white/38 focus:border-amber-400 focus:bg-white/[0.10]"
-      />
-    </label>
-  );
-}
-
-function FileInput({ label, name, onChange }) {
-  return (
-    <label className="mt-4 block">
-      <span className="mb-2 block text-sm font-bold text-white">{label}</span>
-      <input
-        type="file"
-        name={name}
-        onChange={onChange}
-        accept=".pdf,.jpg,.jpeg,.png"
-        className="w-full rounded-sm border border-white/14 bg-white/[0.075] px-4 py-3 text-sm text-white file:mr-4 file:rounded file:border-0 file:bg-amber-400 file:px-4 file:py-2 file:font-bold file:text-black"
       />
     </label>
   );
