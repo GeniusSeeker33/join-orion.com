@@ -391,17 +391,23 @@ function ApplicationForm({ form, completion, submitStatus, submitMessage, onChan
       <Input label="Business Email" name="email" type="email" value={form.email} onChange={onChange} placeholder="you@business.com" required />
       <Input label="Phone Number" name="phone" type="tel" value={form.phone} onChange={onChange} placeholder="(000) 000-0000" required />
 
-      <Select label="Is your business a storefront or home-based?" name="locationType" value={form.locationType} onChange={onChange} required>
-        <option value="">Select an option</option>
-        <option>Storefront</option>
-        <option>Home-Based</option>
-      </Select>
+      <RadioGroup
+        label="Is your business a storefront or home-based?"
+        name="locationType"
+        value={form.locationType}
+        onChange={onChange}
+        options={["Storefront", "Home-Based"]}
+        required
+      />
 
-      <Select label="Do you have multiple locations?" name="multipleLocations" value={form.multipleLocations} onChange={onChange} required>
-        <option value="">Select an option</option>
-        <option>Yes</option>
-        <option>No</option>
-      </Select>
+      <RadioGroup
+        label="Do you have multiple locations?"
+        name="multipleLocations"
+        value={form.multipleLocations}
+        onChange={onChange}
+        options={["Yes", "No"]}
+        required
+      />
 
       <div className="mt-6 rounded-lg border border-white/10 bg-white/[0.03] p-4">
         <div className="flex gap-4">
@@ -468,6 +474,42 @@ function Input({ label, name, value, onChange, type = "text", placeholder = "", 
         className="w-full rounded-sm border border-white/14 bg-white/[0.075] px-4 py-3 text-white outline-none transition placeholder:text-white/38 focus:border-amber-400 focus:bg-white/[0.10]"
       />
     </label>
+  );
+}
+
+function RadioGroup({ label, name, value, onChange, options, required = false }) {
+  return (
+    <fieldset className="mt-4">
+      <legend className="mb-2 block text-sm font-bold text-white">
+        {label} {required && <span className="text-red-500">*</span>}
+      </legend>
+      <div className="flex flex-wrap gap-3">
+        {options.map((option) => {
+          const checked = value === option;
+          return (
+            <label
+              key={option}
+              className={`flex flex-1 cursor-pointer items-center gap-3 rounded-sm border px-4 py-3 transition ${
+                checked
+                  ? "border-amber-400 bg-amber-400/10 text-amber-200"
+                  : "border-white/14 bg-white/[0.075] text-white/80 hover:border-white/30"
+              }`}
+            >
+              <input
+                type="radio"
+                name={name}
+                value={option}
+                checked={checked}
+                onChange={onChange}
+                required={required}
+                className="h-4 w-4 accent-amber-400"
+              />
+              <span className="font-semibold">{option}</span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }
 
