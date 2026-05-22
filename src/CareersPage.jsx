@@ -62,7 +62,7 @@ export default function CareersPage() {
     (async () => {
       const { data, error } = await supabase
         .from("job_postings")
-        .select("id, title, location, employment_type, department, hours, pay, description")
+        .select("id, title, location, employment_type, department, hours, pay, description, video_url")
         .eq("is_active", true)
         .order("created_at", { ascending: false });
 
@@ -417,9 +417,25 @@ export default function CareersPage() {
   );
 }
 
+function getYouTubeId(url) {
+  if (!url) return null;
+  const patterns = [
+    /youtube\.com\/shorts\/([\w-]{11})/,
+    /youtube\.com\/watch\?v=([\w-]{11})/,
+    /youtu\.be\/([\w-]{11})/,
+    /youtube\.com\/embed\/([\w-]{11})/
+  ];
+  for (const re of patterns) {
+    const m = url.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 function JobCard({ job, onApply }) {
   const [expanded, setExpanded] = useState(false);
   const isLong = (job.description?.length ?? 0) > 280;
+  const videoId = getYouTubeId(job.video_url);
   return (
     <article className="rounded-xl border border-white/15 bg-black/50 p-6 shadow-lg shadow-black/30 backdrop-blur-md sm:p-7">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -460,6 +476,20 @@ function JobCard({ job, onApply }) {
                   {expanded ? "Show less" : "Show full description"}
                 </button>
               )}
+            </div>
+          )}
+          {videoId && (
+            <div className="mt-5 w-full max-w-[280px] overflow-hidden rounded-lg border border-white/15 bg-black shadow-lg shadow-black/40">
+              <div className="relative" style={{ paddingTop: "177.78%" }}>
+                <iframe
+                  src={`https://www.youtube.com/embed/${videoId}`}
+                  title={`${job.title} preview`}
+                  loading="lazy"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                  className="absolute inset-0 h-full w-full"
+                />
+              </div>
             </div>
           )}
         </div>
