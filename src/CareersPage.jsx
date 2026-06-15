@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { track } from "@vercel/analytics";
 import { supabase } from "./lib/supabaseClient";
+import VisitorCounter from "./VisitorCounter";
 import {
   ArrowLeft,
   ArrowRight,
@@ -411,6 +412,9 @@ export default function CareersPage() {
 
         <footer className="border-t border-white/10 py-6 text-center text-xs text-white/50">
           <p>&copy; {new Date().getFullYear()} Orion Wholesale. All rights reserved.</p>
+          <div className="mt-2 flex justify-center">
+            <VisitorCounter page="careers" />
+          </div>
         </footer>
       </div>
     </main>
