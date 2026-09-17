@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { track } from "@vercel/analytics";
 import { supabase } from "./lib/supabaseClient";
@@ -76,8 +76,22 @@ export default function CareersPage() {
         return;
       }
 
-      setJobs(data || []);
+      const loadedJobs = data || [];
+      setJobs(loadedJobs);
       setJobsStatus("ready");
+
+      const requestedJobId = new URLSearchParams(window.location.search).get("job");
+      const requestedJob = loadedJobs.find((job) => job.id === requestedJobId);
+      if (requestedJob) {
+        setForm((prev) => ({
+          ...prev,
+          positionId: requestedJob.id,
+          positionTitle: requestedJob.title
+        }));
+        requestAnimationFrame(() => {
+          document.getElementById("candidate-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
     })();
     return () => {
       cancelled = true;
