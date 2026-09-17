@@ -41,7 +41,9 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: "Unable to load jobs" });
   }
 
-  res.setHeader("Access-Control-Allow-Origin", "https://geniusseeker.com");
+  // This endpoint exposes only active public job fields and carries no credentials,
+  // so partner boards and deployment previews may read it safely from any origin.
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
   return res.status(200).json({
     workspace: { slug: "orion", name: "Orion Wholesale" },
