@@ -44,6 +44,8 @@ export default function RecruitingDashboard() {
   const [selectedId, setSelectedId] = useState(null);
   const [savingId, setSavingId] = useState(null);
   const [openingResume, setOpeningResume] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -205,6 +207,43 @@ export default function RecruitingDashboard() {
         a.id === id ? { ...a, status } : a
       )
     );
+  }
+
+  function selectCandidate(candidate) {
+    setSelectedId(candidate.id);
+    setNotesDraft(candidate.admin_notes || "");
+    setMessage("");
+  }
+
+  async function saveNotes() {
+    if (!authorized || !selectedCandidate || savingNotes) return;
+    setSavingNotes(true);
+    setMessage("");
+
+    const { data, error } = await supabase
+      .from("candidate_applications")
+      .update({ admin_notes: notesDraft })
+      .eq("id", selectedCandidate.id)
+      .select("id,admin_notes");
+
+    setSavingNotes(false);
+
+    if (error) {
+      setMessage("Could not save recruiter notes: " + error.message);
+      return;
+    }
+    if (!data?.length) {
+      setMessage("Notes were not saved. Check administrator update permissions.");
+      return;
+    }
+    setApplications((previous) =>
+      previous.map((candidate) =>
+        candidate.id === selectedCandidate.id
+          ? { ...candidate, admin_notes: data[0].admin_notes }
+          : candidate
+      )
+    );
+    setMessage("Recruiter notes saved.");
   }
 
   async function openResume(candidate) {
@@ -414,7 +453,7 @@ export default function RecruitingDashboard() {
                           <button
                             type="button"
                             onClick={() =>
-                              setSelectedId(candidate.id)
+                              selectCandidate(candidate)
                             }
                             className="text-left font-semibold text-amber-300 hover:underline"
                           >
@@ -580,10 +619,27 @@ export default function RecruitingDashboard() {
                   <h3 className="font-semibold text-amber-300">
                     Recruiter Notes
                   </h3>
-                  <p className="mt-2 whitespace-pre-wrap text-sm text-white/80">
-                    {selectedCandidate.admin_notes ||
-                      "No notes recorded yet."}
-                  </p>
+                  <textarea
+                    aria-label="Recruiter notes"
+                    value={notesDraft}
+                    onChange={(event) => setNotesDraft(event.target.value)}
+                    rows={5}
+                    className="mt-2 w-full rounded border border-white/20 bg-slate-800 p-3 text-white"
+                    placeholder="Screening feedback, interview observations, next steps..."
+                  />
+                  <div className="mt-2 flex items-center gap-3">
+                    <button
+                      type="button"
+                      disabled={savingNotes || notesDraft === (selectedCandidate.admin_notes || "")}
+                      onClick={saveNotes}
+                      className="rounded bg-amber-400 px-4 py-2 font-semibold text-black disabled:opacity-50"
+                    >
+                      {savingNotes ? "Saving…" : "Save notes"}
+                    </button>
+                    {notesDraft !== (selectedCandidate.admin_notes || "") && (
+                      <span className="text-xs text-amber-200">Unsaved changes</span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-6">
