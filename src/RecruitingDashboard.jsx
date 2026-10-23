@@ -43,6 +43,7 @@ export default function RecruitingDashboard() {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [savingId, setSavingId] = useState(null);
+  const [openingResume, setOpeningResume] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -204,6 +205,28 @@ export default function RecruitingDashboard() {
         a.id === id ? { ...a, status } : a
       )
     );
+  }
+
+  async function openResume(candidate) {
+    if (!authorized || !candidate?.resume_path || openingResume) return;
+
+    setOpeningResume(true);
+    setMessage("");
+
+    try {
+      const { data, error } = await supabase.storage
+        .from("resumes")
+        .createSignedUrl(candidate.resume_path, 60);
+
+      if (error) throw error;
+      if (!data?.signedUrl) throw new Error("No secure resume link was returned.");
+
+      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      setMessage("Unable to open resume: " + error.message);
+    } finally {
+      setOpeningResume(false);
+    }
   }
 
   if (checking) {
@@ -567,11 +590,20 @@ export default function RecruitingDashboard() {
                   <h3 className="font-semibold text-amber-300">
                     Resume
                   </h3>
-                  <p className="mt-2 text-sm text-white/70">
-                    {selectedCandidate.resume_path
-                      ? "Resume on file. Secure download will be enabled after access testing."
-                      : "No resume attached."}
-                  </p>
+                  {selectedCandidate.resume_path ? (
+                    <button
+                      type="button"
+                      disabled={openingResume}
+                      onClick={() => openResume(selectedCandidate)}
+                      className="mt-2 rounded bg-amber-400 px-4 py-2 font-semibold text-black disabled:opacity-50"
+                    >
+                      {openingResume ? "Opening resume…" : "Open resume securely"}
+                    </button>
+                  ) : (
+                    <p className="mt-2 text-sm text-white/70">
+                      No resume attached.
+                    </p>
+                  )}
                 </div>
               </section>
             )}
