@@ -154,8 +154,14 @@ export default function CareersPage() {
 
     const applicationId = crypto.randomUUID();
 
+    const resumePath = await uploadResume(applicationId);
+    const trackingParams = new URLSearchParams(window.location.search);
+    const applicationSource = trackingParams.get("utm_source") || "direct_or_unknown";
+
     const payload = {
       id: applicationId,
+      resume_path: resumePath,
+      source: applicationSource,
       first_name: form.firstName.trim(),
       last_name: form.lastName.trim(),
       email: form.email.trim(),
@@ -174,15 +180,6 @@ export default function CareersPage() {
       setSubmitStatus("error");
       setSubmitMessage("Something went wrong submitting your application. Please try again or email careers@join-orion.com.");
       return;
-    }
-
-    const resumePath = await uploadResume(applicationId);
-    if (resumePath) {
-      const { error: updateError } = await supabase
-        .from("candidate_applications")
-        .update({ resume_path: resumePath })
-        .eq("id", applicationId);
-      if (updateError) console.error("Resume path update error:", updateError);
     }
 
     const { error: emailError } = await supabase.functions.invoke("send-candidate-confirmation", {
