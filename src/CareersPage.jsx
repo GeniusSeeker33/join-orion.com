@@ -152,6 +152,17 @@ export default function CareersPage() {
     setSubmitStatus("loading");
     setSubmitMessage("");
 
+    if (form.resumeFile) {
+      const extension = form.resumeFile.name.split(".").pop()?.toLowerCase();
+      const allowedExtensions = ["pdf", "doc", "docx"];
+      const maxResumeBytes = 10 * 1024 * 1024;
+      if (!allowedExtensions.includes(extension) || form.resumeFile.size > maxResumeBytes || form.resumeFile.size === 0) {
+        setSubmitStatus("error");
+        setSubmitMessage("Please upload a PDF, DOC, or DOCX resume that is between 1 byte and 10 MB.");
+        return;
+      }
+    }
+
     const applicationId = crypto.randomUUID();
 
     const resumePath = await uploadResume(applicationId);
