@@ -232,17 +232,22 @@ export default function SalesExecutivePage() {
               Compensation & Opportunity
             </h2>
           </div>
-
+          
           <div className="mt-9 grid gap-5 md:grid-cols-3">
             <div className="rounded-xl border border-amber-400/30 bg-amber-400/[0.06] p-7">
               <DollarSign className="h-8 w-8 text-amber-300" />
+
               <h3 className="mt-4 text-xl font-bold">Year 1</h3>
+
               <p className="mt-3 text-2xl font-black text-amber-300">
-                $31,200 Base
+                $41,200 First-Year Compensation Opportunity
               </p>
+
               <p className="mt-3 text-sm leading-7 text-white/70">
-                Plus up to $10,000 in quarterly retention bonuses,
-                uncapped commissions, performance bonuses, and SPIFFs.
+                $31,200 annual base salary plus up to $10,000 in
+                retention bonuses ($2,500 every 90 days).
+                PLUS uncapped commissions, performance bonuses,
+                and SPIFFs!
               </p>
             </div>
 
