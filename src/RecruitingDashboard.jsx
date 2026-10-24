@@ -35,6 +35,9 @@ export default function RecruitingDashboard() {
   const [checking, setChecking] = useState(true);
   const [email, setEmail] = useState(ADMIN_EMAIL);
   const [message, setMessage] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [codeRequested, setCodeRequested] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
 
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -159,23 +162,42 @@ export default function RecruitingDashboard() {
   const hireRate =
     total > 0 ? `${((hired / total) * 100).toFixed(1)}%` : "—";
 
-  async function sendLink(event) {
+  async function sendCode(event) {
     event.preventDefault();
+    if (authBusy) return;
+    setAuthBusy(true);
     setMessage("");
-
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
-      options: {
-        emailRedirectTo:
-          window.location.origin + "/admin/recruiting",
-      },
+      options: { shouldCreateUser: false },
     });
+    setAuthBusy(false);
+    if (error) {
+      setMessage(error.message);
+    } else {
+      setCodeRequested(true);
+      setOtpCode("");
+      setMessage("A six-digit sign-in code was requested. Check your Outlook inbox, Junk, and Quarantine.");
+    }
+  }
 
-    setMessage(
-      error
-        ? error.message
-        : "Check your inbox for the secure sign-in link."
-    );
+  async function verifyCode(event) {
+    event.preventDefault();
+    if (authBusy || !/^\\d{6}$/.test(otpCode)) return;
+    setAuthBusy(true);
+    setMessage("");
+    const { error } = await supabase.auth.verifyOtp({
+      email: email.trim(),
+      token: otpCode,
+      type: "email",
+    });
+    setAuthBusy(false);
+    if (error) {
+      setMessage("Code verification failed: " + error.message);
+    } else {
+      setOtpCode("");
+      setMessage("");
+    }
   }
 
   async function changeStatus(id, status) {
@@ -311,7 +333,7 @@ export default function RecruitingDashboard() {
 
         {!session ? (
           <form
-            onSubmit={sendLink}
+            onSubmit={codeRequested ? verifyCode : sendCode}
             className="max-w-md space-y-4 rounded-xl border border-white/20 bg-white/5 p-6"
           >
             <h2 className="text-xl font-bold">
@@ -319,24 +341,52 @@ export default function RecruitingDashboard() {
             </h2>
 
             <p className="text-sm text-white/70">
-              We'll email you a secure sign-in link.
+              We'll email you a six-digit sign-in code. No link required.
             </p>
 
             <input
               type="email"
               required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => { setEmail(e.target.value); setCodeRequested(false); setOtpCode(""); }}
               aria-label="Administrator email"
+              disabled={authBusy}
               className="w-full rounded bg-white p-3 text-black"
             />
 
+            {codeRequested && (
+              <div className="space-y-2">
+                <label htmlFor="recruiting-otp" className="block text-sm font-semibold">
+                  Six-digit verification code
+                </label>
+                <input
+                  id="recruiting-otp"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  required
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\\D/g, "").slice(0, 6))}
+                  className="w-full rounded bg-white p-3 tracking-widest text-black"
+                />
+              </div>
+            )}
             <button
               type="submit"
-              className="rounded bg-amber-400 px-5 py-3 font-bold text-black"
+              disabled={authBusy || (codeRequested && otpCode.length !== 6)}
+              className="rounded bg-amber-400 px-5 py-3 font-bold text-black disabled:opacity-50"
             >
-              Send sign-in link
+              {authBusy ? "Please wait…" : codeRequested ? "Verify code" : "Send sign-in code"}
             </button>
+            {codeRequested && (
+              <button type="button" disabled={authBusy}
+                onClick={() => { setCodeRequested(false); setOtpCode(""); setMessage(""); }}
+                className="ml-3 text-sm text-amber-300 underline">
+                Request another code
+              </button>
+            )}
           </form>
         ) : !authorized ? (
           <div className="rounded-xl border border-red-400/40 p-6">
