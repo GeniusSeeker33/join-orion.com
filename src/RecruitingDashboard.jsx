@@ -1,5 +1,5 @@
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "./lib/supabaseClient";
 
@@ -45,6 +45,7 @@ export default function RecruitingDashboard() {
   const [sourceFilter, setSourceFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
+  const profileRef = useRef(null);
   const [savingId, setSavingId] = useState(null);
   const [openingResume, setOpeningResume] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
@@ -235,6 +236,9 @@ export default function RecruitingDashboard() {
     setSelectedId(candidate.id);
     setNotesDraft(candidate.admin_notes || "");
     setMessage("");
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => profileRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    });
   }
 
   async function saveNotes() {
@@ -565,7 +569,9 @@ export default function RecruitingDashboard() {
 
             {selectedCandidate && (
               <section
-                className="mt-6 rounded-xl border border-amber-400/30 bg-white/5 p-6"
+                ref={profileRef}
+                tabIndex={-1}
+                className="mt-6 scroll-mt-6 rounded-xl border border-amber-400/30 bg-white/5 p-6"
                 aria-label="Candidate details"
               >
                 <div className="flex items-start justify-between gap-4">
