@@ -16,6 +16,7 @@ import {
   Briefcase
 } from "lucide-react";
 import { supabase } from "./lib/supabaseClient";
+import VisitorCounter from "./VisitorCounter.jsx";
 
 const CAMPAIGN = "orion_sales_executive";
 
@@ -395,7 +396,8 @@ export default function SalesExecutivePage() {
       </section>
 
       <footer className="border-t border-white/10 px-6 py-8 text-center text-sm text-white/45">
-        © {new Date().getFullYear()} Orion Wholesale · Jeffersonville, Indiana
+        <div>© {new Date().getFullYear()} Orion Wholesale · Jeffersonville, Indiana</div>
+        <div className="mt-3 flex justify-center"><VisitorCounter page="sales_executive" /></div>
       </footer>
     </main>
   );
