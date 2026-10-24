@@ -177,13 +177,13 @@ export default function RecruitingDashboard() {
     } else {
       setCodeRequested(true);
       setOtpCode("");
-      setMessage("A six-digit sign-in code was requested. Check your Outlook inbox, Junk, and Quarantine.");
+      setMessage("A eight-digit sign-in code was requested. Check your Outlook inbox, Junk, and Quarantine.");
     }
   }
 
   async function verifyCode(event) {
     event.preventDefault();
-    if (authBusy || !/^\\d{6}$/.test(otpCode)) return;
+    if (authBusy || !/^\d{8}$/.test(otpCode)) return;
     setAuthBusy(true);
     setMessage("");
     const { error } = await supabase.auth.verifyOtp({
@@ -341,7 +341,7 @@ export default function RecruitingDashboard() {
             </h2>
 
             <p className="text-sm text-white/70">
-              We'll email you a six-digit sign-in code. No link required.
+              We'll email you a eight-digit sign-in code. No link required.
             </p>
 
             <input
@@ -357,25 +357,25 @@ export default function RecruitingDashboard() {
             {codeRequested && (
               <div className="space-y-2">
                 <label htmlFor="recruiting-otp" className="block text-sm font-semibold">
-                  Six-digit verification code
+                  Eight-digit verification code
                 </label>
                 <input
                   id="recruiting-otp"
                   type="text"
                   inputMode="numeric"
                   autoComplete="one-time-code"
-                  pattern="[0-9]{6}"
-                  maxLength={6}
+                  pattern="[0-9]{8}"
+                  maxLength={8}
                   required
                   value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\\D/g, "").slice(0, 6))}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
                   className="w-full rounded bg-white p-3 tracking-widest text-black"
                 />
               </div>
             )}
             <button
               type="submit"
-              disabled={authBusy || (codeRequested && otpCode.length !== 6)}
+              disabled={authBusy || (codeRequested && otpCode.length !== 8)}
               className="rounded bg-amber-400 px-5 py-3 font-bold text-black disabled:opacity-50"
             >
               {authBusy ? "Please wait…" : codeRequested ? "Verify code" : "Send sign-in code"}
