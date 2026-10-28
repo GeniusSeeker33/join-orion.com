@@ -168,11 +168,17 @@ export default function CareersPage() {
     const resumePath = await uploadResume(applicationId);
     const trackingParams = new URLSearchParams(window.location.search);
     const applicationSource = trackingParams.get("utm_source") || "direct_or_unknown";
+    const utmMedium = trackingParams.get("utm_medium");
+    const utmCampaign = trackingParams.get("utm_campaign");
+    const utmContent = trackingParams.get("utm_content");
 
     const payload = {
       id: applicationId,
       resume_path: resumePath,
       source: applicationSource,
+      utm_medium: utmMedium,
+      utm_campaign: utmCampaign,
+      utm_content: utmContent,
       first_name: form.firstName.trim(),
       last_name: form.lastName.trim(),
       email: form.email.trim(),
