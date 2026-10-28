@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { marketingDevClient } from "./lib/marketingDevClient";
+import { saveMarketingDraft } from "./lib/marketingDevStorage";
 
 // Ported campaign-planning fields from the Sales Simulation Marketing Command Center.
 // Drafts are intentionally browser-local until the shared marketing API is authorized.
@@ -9,6 +11,10 @@ export default function MarketingCampaignPlanner() {
     catch { return blank; }
   });
   const [saved, setSaved] = useState(false);
+  const [remoteId, setRemoteId] = useState(null);
+  const [message, setMessage] = useState("");
+  const [remote, setRemote] = useState([]);
+  useEffect(() => { let alive=true; marketingDevClient.from("marketing_dev_campaigns").select("*").order("updated_at",{ascending:false}).then(({data,error})=>{ if(alive) { if(error) setMessage(error.message); else setRemote(data||[]); } }); return ()=>{alive=false}; },[]);
   const change = e => { setForm(v => ({ ...v, [e.target.name]: e.target.value })); setSaved(false); };
   const fields = [
     ["name", "Campaign name", "text"],
@@ -23,12 +29,13 @@ export default function MarketingCampaignPlanner() {
   ];
   return <section className="rounded-xl border border-slate-700 bg-slate-900 p-6 mt-6">
     <h2 className="text-xl font-semibold mb-2">Campaign planning</h2>
-    <p className="text-slate-400 mb-5">Adapted from the existing Sales Simulation campaign form. Browser-local planning only: no database write, approval, or publication.</p>
-    <form className="grid gap-4 md:grid-cols-2" onSubmit={e => {
+    <p className="text-slate-400 mb-5">Adapted from the existing Sales Simulation campaign form. Save campaign drafts to the dedicated Marketing development database. Your existing browser draft remains available until you save it. No approval or publication.</p>
+    <form className="grid gap-4 md:grid-cols-2" onSubmit={async e => {
       e.preventDefault();
       if (form.starts_on && form.ends_on && form.ends_on < form.starts_on) return;
-      localStorage.setItem("join-orion-marketing-draft-v1", JSON.stringify(form));
-      setSaved(true);
+      setMessage("");
+      try { const payload = {...form, budget_amount:form.budget_amount === "" ? null : Number(form.budget_amount), starts_on:form.starts_on||null, ends_on:form.ends_on||null}; if(remoteId) payload.id=remoteId; const item=await saveMarketingDraft("marketing_dev_campaigns",payload); setRemoteId(item.id); setRemote(v=>[item,...v.filter(x=>x.id!==item.id)]); setSaved(true); localStorage.setItem("join-orion-marketing-draft-v1", JSON.stringify(form)); }
+      catch(err){ setMessage("Database save failed: "+err.message); }
     }}>
       {fields.map(([name,label,type]) => <label key={name} className={type==="textarea"?"md:col-span-2 grid gap-2":"grid gap-2"}>
         <span className="text-sm text-slate-300">{label}</span>
@@ -37,12 +44,14 @@ export default function MarketingCampaignPlanner() {
       </label>)}
       {form.starts_on && form.ends_on && form.ends_on < form.starts_on && <p role="alert" className="md:col-span-2 text-red-300">End date must not precede start date.</p>}
       <div className="md:col-span-2 flex flex-wrap gap-3 items-center">
-        <button type="submit" disabled={!!(form.starts_on && form.ends_on && form.ends_on < form.starts_on)} className="rounded bg-amber-400 text-slate-950 font-semibold px-5 py-3 disabled:opacity-50">Save browser-local draft</button>
+        <button type="submit" disabled={!!(form.starts_on && form.ends_on && form.ends_on < form.starts_on)} className="rounded bg-amber-400 text-slate-950 font-semibold px-5 py-3 disabled:opacity-50">Save to development database</button>
         <button type="button" className="rounded border border-slate-600 px-5 py-3" onClick={() => {
-          localStorage.removeItem("join-orion-marketing-draft-v1"); setForm(blank); setSaved(false);
+          localStorage.removeItem("join-orion-marketing-draft-v1"); setForm(blank); setRemoteId(null); setSaved(false);
         }}>Clear draft</button>
-        {saved && <span role="status" className="text-emerald-300">Saved in this browser only.</span>}
+        {saved && <span role="status" className="text-emerald-300">Saved to Marketing development database.</span>}
+        {message && <span role="alert" className="text-red-300">{message}</span>}
       </div>
     </form>
+    <div className="mt-6 border-t border-slate-700 pt-4"><h3 className="font-semibold">Saved database campaigns ({remote.length})</h3>{remote.map(c=><div key={c.id} className="mt-3 flex justify-between gap-3"><span>{c.name} · Draft</span><button type="button" className="text-amber-300 underline" onClick={()=>{setRemoteId(c.id);setForm({...blank,...c,budget_amount:c.budget_amount?.toString()||"",starts_on:c.starts_on||"",ends_on:c.ends_on||""});setSaved(false)}}>Edit</button></div>)}</div>
   </section>;
 }
