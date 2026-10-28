@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { supabase } from "./lib/supabaseClient";
 import MarketingCampaignPlanner from "./MarketingCampaignPlanner";
+import MarketingContentStudio from "./MarketingContentStudio";
 
 const ADMIN_EMAIL = "desiree@orionwholesaleonline.com";
 const tabs = [["overview", "Overview"], ["campaigns", "Campaigns"], ["content", "Content"], ["approvals", "Approvals"], ["agents", "Agents"], ["settings", "Settings"]];
@@ -55,7 +56,8 @@ export default function MarketingCommandCenter() {
         {active==="overview" ? <section className="grid md:grid-cols-3 gap-4"><Summary label="Campaigns planned" value="1" /><Summary label="Proposed budget" value="$250" /><Summary label="Campaigns approved" value="0" /></section> : null}
         {["overview","campaigns"].includes(active) ? <section className="mt-6 rounded-xl border border-slate-700 bg-slate-900 p-6"><h2 className="text-xl font-semibold mb-4">Recruiting campaigns</h2>{campaigns.map(c=><article key={c.title} className="border-t border-slate-700 py-4"><h3 className="font-semibold">{c.title}</h3><p className="text-slate-400">{c.objective} · {c.channel} · {c.budget} · {c.status}</p></article>)}<p className="text-amber-200 text-sm">Planning reference only; not an approved campaign. The shared marketing API will be connected after authorization.</p></section> : null}
         {["overview","campaigns"].includes(active) && <MarketingCampaignPlanner />}
-        {!["overview","campaigns"].includes(active) && <section className="rounded-xl border border-slate-700 bg-slate-900 p-6"><h2 className="text-xl font-semibold">{tabs.find(t=>t[0]===active)?.[1] || "Marketing"}</h2><p className="text-slate-400 mt-2">Integration pending. No simulated metrics, approval actions, or agent execution.</p></section>}
+        {active==="content" && <MarketingContentStudio />}
+        {!["overview","campaigns","content"].includes(active) && <section className="rounded-xl border border-slate-700 bg-slate-900 p-6"><h2 className="text-xl font-semibold">{tabs.find(t=>t[0]===active)?.[1] || "Marketing"}</h2><p className="text-slate-400 mt-2">Integration pending. No simulated metrics, approval actions, or agent execution.</p></section>}
       </>}
     </div>
   </main>;
