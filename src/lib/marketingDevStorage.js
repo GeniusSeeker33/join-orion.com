@@ -1,4 +1,4 @@
-import { supabase } from "./lib/supabaseClient";
+import { marketingDevClient as supabase } from "./marketingDevClient";
 
 /** Development-only adapter. Requires the migration in docs/marketing-dev-storage.sql.
  * Never silently fall back to local storage after a failed remote write.
