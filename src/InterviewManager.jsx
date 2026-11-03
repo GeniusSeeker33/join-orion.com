@@ -1,0 +1,31 @@
+import { useState } from "react";
+import { marketingDevClient as supabase } from "./lib/marketingDevClient";
+const input="w-full rounded border border-slate-600 bg-slate-800 p-2";
+export default function InterviewManager({candidate,interviews,feedback,onRefresh}){
+ const [form,setForm]=useState({position:"",date:"",start:"",end:"",format:"In person",stage:"Initial interview"});
+ const [draft,setDraft]=useState({}),[open,setOpen]=useState(null),[error,setError]=useState(""),[saving,setSaving]=useState(false);
+ const set=(key,value)=>setForm(old=>({...old,[key]:value}));
+ async function create(e){e.preventDefault();setSaving(true);setError("");
+ const {error:err}=await supabase.rpc("ats_admin_create_interview",{p_candidate_id:candidate.id,p_position_title:form.position,p_interview_date:form.date,p_start_time:form.start||null,p_end_time:form.end||null,p_interview_format:form.format,p_interview_stage:form.stage});
+ if(err)setError(err.message);else{setForm({...form,position:"",date:"",start:"",end:""});await onRefresh();}setSaving(false);}
+ async function attendance(id,status){setSaving(true);const {error:err}=await supabase.rpc("ats_admin_update_attendance",{p_interview_id:id,p_attendance:status});if(err)setError(err.message);else await onRefresh();setSaving(false);}
+ async function saveFeedback(e,id){e.preventDefault();setSaving(true);const d=draft[id]||{};const {error:err}=await supabase.rpc("ats_admin_save_interview_feedback",{p_interview_id:id,p_notes:d.notes||null,p_manager_feedback:d.manager||null,p_rating:d.rating?Number(d.rating):null});if(err)setError(err.message);else{setOpen(null);setDraft(old=>({...old,[id]:{}}));await onRefresh();}setSaving(false);}
+ const updateDraft=(id,key,value)=>setDraft(old=>({...old,[id]:{...old[id],[key]:value}}));
+ return <section className="mt-6 border-t border-slate-700 pt-5"><h3 className="text-lg font-semibold mb-3">Interview management</h3>
+ <form onSubmit={create} className="grid sm:grid-cols-2 gap-3 mb-5">
+ <label className="sm:col-span-2">Position<input className={input} required maxLength={150} value={form.position} onChange={e=>set("position",e.target.value)}/></label>
+ <label>Date<input className={input} type="date" required value={form.date} onChange={e=>set("date",e.target.value)}/></label>
+ <label>Format<select className={input} value={form.format} onChange={e=>set("format",e.target.value)}><option>In person</option><option>Phone</option><option>Video</option></select></label>
+ <label>Start<input className={input} type="time" value={form.start} onChange={e=>set("start",e.target.value)}/></label>
+ <label>End<input className={input} type="time" value={form.end} onChange={e=>set("end",e.target.value)}/></label>
+ <label className="sm:col-span-2">Stage<input className={input} maxLength={100} value={form.stage} onChange={e=>set("stage",e.target.value)}/></label>
+ <button disabled={saving} className="sm:col-span-2 rounded bg-amber-300 p-2 font-semibold text-slate-950">Schedule interview</button></form>
+ <h4 className="font-semibold mb-2">History and attendance ({interviews.length})</h4>
+ {[...interviews].sort((a,b)=>String(b.interview_date||"").localeCompare(String(a.interview_date||""))).map(i=><article key={i.id} className="border-t border-slate-700 py-3">
+ <strong>{i.position_title}</strong><p className="text-sm text-slate-400">{i.interview_date||"Date unknown"} · {i.start_time||"Time unknown"} · {i.interview_format||"Format unknown"}</p>
+ <label className="block mt-2 text-sm">Attendance<select disabled={saving} className={input} value={i.attendance_status||"unverified"} onChange={e=>attendance(i.id,e.target.value)}>{[["unverified","Unverified"],["attended","Attended"],["no_show","No-show"],["cancelled","Cancelled"],["rescheduled","Rescheduled"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
+ {feedback.filter(f=>f.interview_id===i.id).map(f=><div key={f.id} className="bg-slate-800 p-3 rounded mt-2"><small>{new Date(f.created_at).toLocaleString()} {f.rating?"· "+f.rating+"/5":""}</small>{f.interview_notes&&<p>Recruiter: {f.interview_notes}</p>}{f.manager_feedback&&<p>Manager: {f.manager_feedback}</p>}</div>)}
+ <button className="underline text-amber-300 mt-2" onClick={()=>setOpen(open===i.id?null:i.id)}>{open===i.id?"Close feedback":"Add feedback"}</button>
+ {open===i.id&&<form onSubmit={e=>saveFeedback(e,i.id)} className="grid gap-2 mt-2"><textarea className={input} maxLength={5000} placeholder="Recruiter notes" value={draft[i.id]?.notes||""} onChange={e=>updateDraft(i.id,"notes",e.target.value)}/><textarea className={input} maxLength={5000} placeholder="Hiring manager feedback (only if actually provided)" value={draft[i.id]?.manager||""} onChange={e=>updateDraft(i.id,"manager",e.target.value)}/><label>Rating<select className={input} value={draft[i.id]?.rating||""} onChange={e=>updateDraft(i.id,"rating",e.target.value)}><option value="">Not rated</option>{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></label><button disabled={saving} className="rounded bg-amber-300 p-2 text-slate-950">Save feedback</button></form>}</article>)}
+ {error&&<p role="alert" className="text-amber-300 mt-2">{error}</p>}</section>;
+}
