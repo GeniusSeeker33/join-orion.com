@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { marketingDevClient as supabase } from "./lib/marketingDevClient";
-const STAGES=["Phone Interview","Video Interview","In Person Interview","Offer","Hired","Started","Terminated"];
+const STAGES=["Phone Interview","Video Interview","In Person Interview"];
 const input="w-full rounded border border-slate-600 bg-slate-800 p-2";
 export default function InterviewManager({candidate,interviews,feedback,onRefresh}){
  const [form,setForm]=useState({position:"",date:"",start:"",end:"",format:"In person",stage:"Phone Interview"});
