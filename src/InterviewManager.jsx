@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { marketingDevClient as supabase } from "./lib/marketingDevClient";
+const STAGES=["Phone Interview","Video Interview","In Person Interview","Offer","Hired","Started","Terminated"];
 const input="w-full rounded border border-slate-600 bg-slate-800 p-2";
 export default function InterviewManager({candidate,interviews,feedback,onRefresh}){
- const [form,setForm]=useState({position:"",date:"",start:"",end:"",format:"In person",stage:"Initial interview"});
+ const [form,setForm]=useState({position:"",date:"",start:"",end:"",format:"In person",stage:"Phone Interview"});
  const [managers,setManagers]=useState([]),[labels,setLabels]=useState({}),[draft,setDraft]=useState({}),[open,setOpen]=useState(null),[error,setError]=useState(""),[saving,setSaving]=useState(false);
  useEffect(()=>{supabase.rpc("ats_admin_hiring_managers").then(({data})=>setManagers(data||[]));},[]);
  useEffect(()=>{let live=true;supabase.rpc("ats_admin_manager_feedback_labels",{p_candidate_id:candidate.id}).then(({data})=>{if(live)setLabels(Object.fromEntries((data||[]).map(x=>[x.feedback_id,x.manager_name])));});return()=>{live=false;};},[candidate.id,feedback]);
@@ -14,13 +15,13 @@ export default function InterviewManager({candidate,interviews,feedback,onRefres
  async function saveFeedback(e,id){e.preventDefault();setSaving(true);const d=draft[id]||{};const {error:err}=await supabase.rpc("ats_admin_save_manager_feedback",{p_interview_id:id,p_manager_id:d.managerId||null,p_notes:d.notes||null,p_manager_feedback:d.manager||null,p_rating:d.rating?Number(d.rating):null});if(err)setError(err.message);else{setOpen(null);setDraft(old=>({...old,[id]:{}}));await onRefresh();}setSaving(false);}
  const updateDraft=(id,key,value)=>setDraft(old=>({...old,[id]:{...old[id],[key]:value}}));
  return <section className="mt-6 border-t border-slate-700 pt-5"><h3 className="text-lg font-semibold mb-3">Interview management</h3>
- <form onSubmit={create} className="grid sm:grid-cols-2 gap-3 mb-5">
+ <div className="mb-5 rounded-lg border border-slate-600 bg-slate-800 p-4"><h4 className="font-semibold mb-2">Hiring manager ratings</h4>{feedback.filter(f=>f.rating!=null).length===0?<p className="text-sm text-slate-400">No ratings recorded yet.</p>:<><p className="text-sm mb-2">Average: {(feedback.filter(f=>f.rating!=null).reduce((sum,f)=>sum+Number(f.rating),0)/feedback.filter(f=>f.rating!=null).length).toFixed(1)} / 5 · {feedback.filter(f=>f.rating!=null).length} rating(s)</p>{feedback.filter(f=>f.rating!=null).map(f=><div key={f.id} className="flex justify-between gap-3 border-t border-slate-700 py-2 text-sm"><span>{labels[f.id]||"Manager not recorded"} · {new Date(f.created_at).toLocaleDateString()}</span><strong className="text-amber-300">{f.rating} / 5</strong></div>)}</>}</div><form onSubmit={create} className="grid sm:grid-cols-2 gap-3 mb-5">
  <label className="sm:col-span-2">Position<input className={input} required maxLength={150} value={form.position} onChange={e=>set("position",e.target.value)}/></label>
  <label>Date<input className={input} type="date" required value={form.date} onChange={e=>set("date",e.target.value)}/></label>
  <label>Format<select className={input} value={form.format} onChange={e=>set("format",e.target.value)}><option>In person</option><option>Phone</option><option>Video</option></select></label>
  <label>Start<input className={input} type="time" value={form.start} onChange={e=>set("start",e.target.value)}/></label>
  <label>End<input className={input} type="time" value={form.end} onChange={e=>set("end",e.target.value)}/></label>
- <label className="sm:col-span-2">Stage<input className={input} maxLength={100} value={form.stage} onChange={e=>set("stage",e.target.value)}/></label>
+ <label className="sm:col-span-2">Stage<select className={input} value={form.stage} onChange={e=>{const stage=e.target.value;setForm(old=>({...old,stage,...(stage==="Phone Interview"?{format:"Phone"}:stage==="Video Interview"?{format:"Video"}:stage==="In Person Interview"?{format:"In person"}:{})}));}}>{STAGES.map(stage=><option key={stage} value={stage}>{stage}</option>)}</select></label>
  <button disabled={saving} className="sm:col-span-2 rounded bg-amber-300 p-2 font-semibold text-slate-950">Schedule interview</button></form>
  <h4 className="font-semibold mb-2">History and attendance ({interviews.length})</h4>
  {[...interviews].sort((a,b)=>String(b.interview_date||"").localeCompare(String(a.interview_date||""))).map(i=><article key={i.id} className="border-t border-slate-700 py-3">
