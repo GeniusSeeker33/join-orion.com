@@ -1,0 +1,10 @@
+import {useEffect,useState} from "react";
+import {marketingDevClient as supabase} from "./lib/marketingDevClient";
+const sources=["Talent Tuesday","WorkforceOne","Career Fair","Employee","Indeed","LinkedIn","Friend Referral","Agency","GeniusSeeker"];
+export default function CandidateSource({candidate,onRefresh}){
+ const [value,setValue]=useState(candidate.application_source||""),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
+ useEffect(()=>{setValue(candidate.application_source||"");setError("");setNotice("");},[candidate.id,candidate.application_source]);
+ async function save(){setBusy(true);setError("");setNotice("");const {error:e}=await supabase.rpc("ats_admin_update_candidate_source",{p_candidate_id:candidate.id,p_source:value});if(e)setError(e.message);else{setNotice("Referral source saved.");await onRefresh();}setBusy(false);}
+ const choices=value&&!sources.includes(value)?[value,...sources]:sources;
+ return <section className="mt-4 rounded-lg border border-slate-700 p-4"><h3 className="font-semibold mb-2">Candidate source / referral source</h3><div className="flex flex-wrap items-end gap-2"><label className="flex-1 min-w-48 text-sm">Source<select className="block w-full rounded border border-slate-600 bg-slate-800 p-2 mt-1" value={value} onChange={e=>{setValue(e.target.value);setNotice("");}}><option value="">Not recorded</option>{choices.map(s=><option key={s} value={s}>{s}</option>)}</select></label><button type="button" disabled={busy||!value||value===(candidate.application_source||"")} onClick={save} className="rounded bg-amber-300 text-slate-950 px-4 py-2 font-semibold disabled:opacity-50">Save source</button></div>{error&&<p role="alert" className="text-amber-300 mt-2 text-sm">{error}</p>}{notice&&<p role="status" className="text-emerald-300 mt-2 text-sm">{notice}</p>}</section>;
+}
