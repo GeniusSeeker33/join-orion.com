@@ -1,6 +1,6 @@
 import {useEffect,useState} from "react";
 import {marketingDevClient as supabase} from "./lib/marketingDevClient";
-const sources=["Talent Tuesday","WorkforceOne","Career Fair","Employee","Indeed","LinkedIn","Friend Referral","Agency","GeniusSeeker"];
+const sources=["Talent Tuesday","WorkforceOne","Career Fair","Employee","Indeed","LinkedIn","Friend Referral","Agency","GeniusSeeker","Join-Orion","OrionFFLSales"];
 export default function CandidateSource({candidate,onRefresh}){
  const [referredBy,setReferredBy]=useState(candidate.referred_by||""),[value,setValue]=useState(candidate.application_source||""),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  useEffect(()=>{setValue(candidate.application_source||"");setReferredBy(candidate.referred_by||"");setError("");setNotice("");},[candidate.id,candidate.application_source,candidate.referred_by]);
