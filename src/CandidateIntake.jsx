@@ -1,9 +1,24 @@
 import {useEffect,useState} from "react";
+import {readResumeText, extractContactFields} from "./lib/resumeAutofill";
 import {marketingDevClient as supabase} from "./lib/marketingDevClient";
 const field="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2";
 export default function CandidateIntake({onCreated,onOpenCandidate}){
+ const [parsing,setParsing]=useState(false),[parseMessage,setParseMessage]=useState("");
  const [name,setName]=useState(""),[email,setEmail]=useState(""),[phone,setPhone]=useState(""),[req,setReq]=useState(""),[source,setSource]=useState("Indeed"),[referredBy,setReferredBy]=useState(""),[file,setFile]=useState(null),[reqs,setReqs]=useState([]),[busy,setBusy]=useState(false),[message,setMessage]=useState(""),[error,setError]=useState("");
  useEffect(()=>{supabase.rpc("ats_admin_requisitions").then(({data})=>setReqs((data?.requisitions||[]).filter(r=>r.status==="open")));},[]);
+ async function selectResume(nextFile) {
+  setFile(nextFile); setParseMessage("");
+  if (!nextFile) return;
+  const ext=nextFile.name.split(".").pop()?.toLowerCase();
+  if (!["pdf","doc","docx"].includes(ext) || nextFile.size>10485760) {setParseMessage("Resume must be PDF, DOC, or DOCX, under 10 MB.");return;}
+  setParsing(true);
+  try {
+   const parsed=extractContactFields(await readResumeText(nextFile));
+   setName(previous=>previous||parsed.name);setEmail(previous=>previous||parsed.email);setPhone(previous=>previous||parsed.phone);
+   setParseMessage(parsed.email||parsed.phone||parsed.name?"Contact information extracted. Please verify before saving.":"No contact information detected. Enter it manually before saving.");
+  } catch(err) {setParseMessage(err.message||"Could not read resume. Enter contact details manually.");}
+  finally {setParsing(false);}
+ }
  async function submit(e){e.preventDefault();setBusy(true);setError("");setMessage("");
  try{
  const {data,error:err}=await supabase.rpc("ats_admin_add_candidate",{p_full_name:name,p_email:email,p_phone:phone,p_requisition_id:req||null,p_source:source,p_referred_by:referredBy});
@@ -22,8 +37,8 @@ export default function CandidateIntake({onCreated,onOpenCandidate}){
  <label>Email<input className={field} type="email" maxLength={254} value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Phone<input className={field} type="tel" maxLength={50} value={phone} onChange={e=>setPhone(e.target.value)}/></label>
  <label>Application source<select className={field} value={source} onChange={e=>setSource(e.target.value)}>{["Talent Tuesday","WorkforceOne","Career Fair","Employee","Indeed","LinkedIn","Friend Referral","Agency","GeniusSeeker","Join-Orion","OrionFFLSales"].map(v=><option key={v}>{v}</option>)}</select></label>
  <label>Referred by (optional)<input className={field} maxLength={200} value={referredBy} onChange={e=>setReferredBy(e.target.value)} placeholder="Person or organization"/></label><label>Position<select className={field} value={req} onChange={e=>setReq(e.target.value)}><option value="">Select a position (optional)</option>{reqs.map(r=><option key={r.id} value={r.id}>{r.title} — {r.department}</option>)}</select></label>
- <label className="sm:col-span-2">Resume (PDF, DOC, DOCX; 10 MB max)<input className={field} type="file" accept=".pdf,.doc,.docx" onChange={e=>setFile(e.target.files?.[0]||null)}/></label>
- <p className="sm:col-span-2 text-sm text-slate-400">At least an email or phone is required. Uploaded resumes are stored privately.</p>
- <button disabled={busy||(!email.trim()&&!phone.trim())} className="sm:col-span-2 rounded bg-amber-300 text-slate-950 p-3 font-semibold disabled:opacity-50">{busy?"Saving…":"Save candidate"}</button></form>
+ <label className="sm:col-span-2">Resume (PDF, DOC, DOCX; 10 MB max)<input className={field} type="file" accept=".pdf,.doc,.docx" onChange={e=>selectResume(e.target.files?.[0]||null)}/></label>
+ <p className="sm:col-span-2 text-sm text-amber-200" role="status">{parsing?"Reading resume…":parseMessage}</p><p className="sm:col-span-2 text-sm text-slate-400">At least an email or phone is required. Uploaded resumes are stored privately.</p>
+ <button disabled={busy||parsing||(!email.trim()&&!phone.trim())} className="sm:col-span-2 rounded bg-amber-300 text-slate-950 p-3 font-semibold disabled:opacity-50">{busy?"Saving…":"Save candidate"}</button></form>
  {error&&<p role="alert" className="text-amber-300 mt-3">{error}</p>}{message&&<p role="status" className="text-emerald-300 mt-3">{message}</p>}</section>;
 }

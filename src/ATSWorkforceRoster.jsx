@@ -6,7 +6,7 @@ export default function ATSWorkforceRoster(){
  async function refresh(){setLoading(true);const {data:d,error:e}=await supabase.rpc("ats_admin_workforce_snapshot");if(e)setError(e.message);else{setData(d);setError("");}setLoading(false);}
  useEffect(()=>{refresh();},[]);
  const rows=data?.rows||[];
- const visible=useMemo(()=>rows.filter(r=>[r.employee_name,r.employee_id,r.department,r.payroll_title,r.operational_role].some(v=>String(v||"").toLowerCase().includes(query.toLowerCase())&&(filter==="all"||(filter==="unassigned"?!r.operational_role:filter==="unmatched"?r.match_status!=="verified":r.department===filter))),[rows,query,filter]);
+ const visible=useMemo(()=>rows.filter(r=>[r.employee_name,r.employee_id,r.department,r.payroll_title,r.operational_role].some(v=>String(v||"").toLowerCase().includes(query.toLowerCase()))&&(filter==="all"||(filter==="unassigned"?!r.operational_role:filter==="unmatched"?r.match_status!=="verified":r.department===filter))),[rows,query,filter]);
  const pageSize=25,totalPages=Math.max(1,Math.ceil(visible.length/pageSize)),currentPage=Math.min(page,totalPages),paged=visible.slice((currentPage-1)*pageSize,currentPage*pageSize);
  const departments=[...new Set(rows.map(r=>r.department).filter(Boolean))].sort();
  async function save(r,field,value){setSaving(r.id);const next={...r,[field]:value};const {error:e}=await supabase.rpc("ats_admin_set_workforce_role",{p_id:r.id,p_role:next.operational_role||"",p_department:next.department||""});if(e)setError(e.message);else setData(d=>({...d,rows:d.rows.map(x=>x.id===r.id?next:x)}));setSaving(null);}
