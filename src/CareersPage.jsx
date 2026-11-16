@@ -57,6 +57,7 @@ export default function CareersPage() {
   const [form, setForm] = useState(initialForm);
   const [submitStatus, setSubmitStatus] = useState("idle");
   const [submitMessage, setSubmitMessage] = useState("");
+  const [referralCode, setReferralCode] = useState(() => new URLSearchParams(window.location.search).get('ref') || '');
 
   useEffect(() => {
     let cancelled = false;
@@ -163,6 +164,15 @@ export default function CareersPage() {
       }
     }
 
+    const normalizedReferral = referralCode.trim().toUpperCase();
+    if (normalizedReferral) {
+      const { data: valid, error } = await supabase.rpc('validate_sales_referral', { p_code: normalizedReferral, p_job: form.positionId || null });
+      if (error || !valid) {
+        setSubmitStatus('error');
+        setSubmitMessage(error ? 'We could not verify your referral code. Please try again.' : 'This referral code is unavailable for the selected position. Check the code or remove it to apply without a referral.');
+        return;
+      }
+    }
     const applicationId = crypto.randomUUID();
 
     const resumePath = await uploadResume(applicationId);
@@ -188,6 +198,7 @@ export default function CareersPage() {
       cover_letter: form.coverLetter.trim() || null,
       status: "new"
     };
+    if (normalizedReferral) payload.employee_referral_code = normalizedReferral;
 
     const { error } = await supabase.from("candidate_applications").insert([payload]);
 
@@ -195,7 +206,7 @@ export default function CareersPage() {
       console.error("Candidate insert error:", error);
       track("candidate_form_submit_error", { reason: "insert_failed" });
       setSubmitStatus("error");
-      setSubmitMessage("Something went wrong submitting your application. Please try again or email careers@join-orion.com.");
+      setSubmitMessage(error.code === '22023' ? error.message : "Something went wrong submitting your application. Please try again or email careers@join-orion.com.");
       return;
     }
 
@@ -215,6 +226,7 @@ export default function CareersPage() {
     track("candidate_form_submit_success", { position: form.positionTitle });
     setSubmitStatus("success");
     setForm(initialForm);
+    setReferralCode('');
     const fileInputs = document.querySelectorAll('input[type="file"]');
     fileInputs.forEach((input) => {
       input.value = "";
@@ -412,6 +424,10 @@ export default function CareersPage() {
                   </label>
                 </div>
 
+                <label className="mb-5 block text-sm font-semibold">Employee referral code (optional)
+                  <input name="employeeReferralCode" maxLength={64} value={referralCode} onChange={e => setReferralCode(e.target.value)} aria-describedby="referral-help" className="mt-2 w-full rounded-lg border border-white/20 bg-black/40 px-4 py-3 text-white" />
+                  <span id="referral-help" className="mt-2 block text-xs font-normal text-white/70">For eligible Sales positions only. Enter the code shared by an Orion Sales employee. The first valid code submitted receives credit and cannot be changed afterward.</span>
+                </label>
                 {submitMessage && submitStatus === "error" && (
                   <div className="mt-5 rounded-md border border-red-400/50 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200">
                     {submitMessage}

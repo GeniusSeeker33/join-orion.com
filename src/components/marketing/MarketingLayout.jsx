@@ -16,6 +16,7 @@ export default function MarketingLayout({ title, children }) {
       <nav aria-label="Administration" className="button-row">
         <Link className="btn-secondary" to="/admin">Dealer Admin</Link>
         <Link className="btn-secondary" to="/admin/recruiting">Recruiting</Link>
+        <Link className="btn-secondary" to="/admin/referrals">Sales referrals</Link>
         <button className="btn-secondary" onClick={logout}>Sign out</button>
       </nav>
     </header>
