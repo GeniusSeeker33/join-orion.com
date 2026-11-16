@@ -4,14 +4,17 @@ import { calibrateGuardian } from './marketing-guardian-qa.js';
 
 export async function inferMarketing({ model, request, context, onUsage = () => {}, onPhase = () => {} }) {
   // Retry only a Guardian response that fails JSON/contract validation.
-  // Never retry a failed API call, an incomplete response, constraint coverage,
-  // or a Guardian consistency failure: those have different safety semantics.
+  // Never retry a failed API call, an incomplete response, or a Guardian
+  // consistency failure: those have different safety semantics.
   const maxAttempts = request.agent_key === 'guardian' ? 2 : 1;
   let output;
   let totalUsage = {};
+  let retryReason = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const correctiveInstruction = attempt === 2
-      ? 'The previous response failed structured-output validation. Return a fresh JSON response matching the required schema exactly. Ensure each finding severity agrees with requires_correction: info=false, blocker=true; use warning for actionable non-blockers. If recommendation is needs_changes, include at least one correction-required finding. Evaluate each human constraint exactly once. Do not invent violations or change the asset.'
+      ? retryReason === 'coverage'
+        ? 'Your previous response did not evaluate every supplied human_constraints ID exactly once. Return a fresh valid JSON response. Include exactly one constraint_evaluations entry for each ID from human_constraints; do not include other IDs. If human_constraints is empty, return an empty array. Assess each rule on its merits without inventing violations or changing the asset.'
+        : 'The previous response failed structured-output validation. Return a fresh JSON response matching the required schema exactly. Ensure each finding severity agrees with requires_correction: info=false, blocker=true; use warning for actionable non-blockers. If recommendation is needs_changes, include at least one correction-required finding. Evaluate each human constraint exactly once. Do not invent violations or change the asset.'
       : null;
     const response = await model.responses.create({
       model: MODEL, store: false, max_output_tokens: 6000,
@@ -31,20 +34,29 @@ export async function inferMarketing({ model, request, context, onUsage = () => 
     if (response.status !== 'completed' || !response.output_text) throw new Error('Incomplete model response');
     try {
       output = validateOutput(request.agent_key, JSON.parse(response.output_text));
+      if (request.agent_key === 'guardian') {
+        onPhase('constraint_evaluation_mismatch');
+        const ids = new Set((context.human_constraints || []).map(c => c.id));
+        if (output.constraint_evaluations.length !== ids.size || new Set(output.constraint_evaluations.map(e => e.constraint_id)).size !== ids.size
+          || output.constraint_evaluations.some(e => !ids.has(e.constraint_id))) {
+          retryReason = 'coverage';
+          throw new Error('Invalid constraint evaluation coverage');
+        }
+      }
       break;
     } catch (error) {
-      if (attempt === maxAttempts) throw error;
+      if (attempt === maxAttempts) {
+        if (retryReason === 'coverage') onPhase('constraint_evaluation_mismatch');
+        throw error;
+      }
       // Do not log model output or private campaign data.
-      onPhase('guardian_contract_retry');
+      if (retryReason !== 'coverage') retryReason = 'contract';
+      onPhase(retryReason === 'coverage' ? 'constraint_evaluation_mismatch' : 'guardian_contract_retry');
     }
   }
   if (request.agent_key === 'creator' && output.asset_type !== (request.revision_asset_id ? context.asset.asset_type : request.asset_type)) throw new Error('Wrong requested asset type');
   const qa = request.agent_key === 'guardian' ? [...deterministicQA(context), ...(context.constraint_preflight || [])] : [];
   if (request.agent_key === 'guardian') {
-    onPhase('constraint_evaluation_mismatch');
-    const ids = new Set((context.human_constraints || []).map(c => c.id));
-    if (output.constraint_evaluations.length !== ids.size || new Set(output.constraint_evaluations.map(e => e.constraint_id)).size !== ids.size
-      || output.constraint_evaluations.some(e => !ids.has(e.constraint_id))) throw new Error('Invalid constraint evaluation coverage');
     onPhase('invalid_output');
     const inconsistencies = guardianInconsistencies(output, context, qa);
     if (inconsistencies.length) return { output: { result: output, inconsistencies, validation_version: GUARDIAN_CONSISTENCY_VERSION }, qa, usage: totalUsage, error: GUARDIAN_INCONSISTENCY };
