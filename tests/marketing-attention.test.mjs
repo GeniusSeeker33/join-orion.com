@@ -63,3 +63,17 @@ test('resolution evidence clears only its workspace run and current ready drafts
   snapshot.attention_events = [{ asset_id: asset.id, revision: 5, action: 'approved' }];
   assert.equal(attentionLevel(deriveMarketingAttention(snapshot)), 'clear');
 });
+
+test('human approval clears superseded failed Guardian runs but retains unrelated or unversioned failures', () => {
+ const failed = { ...run, id: 'failed', status: 'failed', asset_revision: 1 };
+ const approved = data({
+  assets: [{ ...asset, revision: 3, approval_state: 'approved' }],
+  attention_runs: [failed],
+  attention_events: [{ asset_id: 'a', revision: 3, action: 'approved' }]
+ });
+ assert.deepEqual(deriveMarketingAttention(approved), []);
+ assert.equal(deriveMarketingAttention({ ...approved, attention_events: [] }).length, 1);
+ assert.equal(deriveMarketingAttention({ ...approved, attention_runs: [{ ...failed, asset_revision: null }] }).length, 1);
+ assert.equal(deriveMarketingAttention({ ...approved, attention_runs: [{ ...failed, asset_id: 'other' }] }).length, 1);
+ assert.equal(deriveMarketingAttention({ ...approved, attention_runs: [{ ...failed, agent_key: 'creator' }] }).length, 1);
+});
