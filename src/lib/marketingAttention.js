@@ -34,6 +34,12 @@ export function deriveMarketingAttention(data, now = Date.now()) {
     if (run.workspace_id !== workspace) continue;
     const base = { id: `run:${run.id}`, run_id: run.id, campaign_id: run.campaign_id, asset_id: run.asset_id || run.outcome_asset_id, name: `${run.agent_key}: ${run.purpose}`, timestamp: run.ended_at || run.started_at, href: `/marketing/agents?run=${run.id}`, action: 'Inspect run', scope: 'agents' };
     if (['failed', 'started', 'cancelled'].includes(run.status)) {
+      // A later saved revision or recorded human decision resolves an old
+      // asset-specific failed review, but never erases the immutable run history.
+      // Missing revision evidence must fail closed and remain actionable.
+      const superseded = run.agent_key === 'guardian' && run.asset_id && Number.isInteger(run.asset_revision)
+        && (resolvedThrough.get(run.asset_id) || 0) > run.asset_revision;
+      if (superseded) continue;
       add({ ...base, severity: 'critical', reason: run.review_issue ? 'Guardian review issue: conflicting review evidence. Retry or inspect Guardian.' : run.status === 'failed' ? 'Agent run failed; operator inspection is required.' : 'Run has no confirmed successful outcome. Inspect before retrying.' });
     } else if (run.status === 'succeeded' && run.agent_key === 'strategist') {
       if (resolvedRuns.has(run.id)) continue;
