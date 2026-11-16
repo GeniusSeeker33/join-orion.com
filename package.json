@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:referrals": "node --test tests/referrals.test.mjs",
+    "test:referral-ui": "playwright test --config tests/referral-ui/playwright.config.mjs",
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",

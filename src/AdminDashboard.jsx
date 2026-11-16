@@ -277,6 +277,7 @@ export default function AdminDashboard() {
             <p className="mt-2 text-white/60">Review, approve, assign, and manage dealer applications.</p>
           </div>
           <div className="flex flex-wrap gap-3">
+            <Link to="/admin/referrals" className="rounded-lg border border-white/15 px-4 py-2 text-sm font-bold hover:bg-white/10">Sales referrals</Link>
             <Link to="/marketing" className="rounded-lg border border-white/15 px-4 py-2 text-sm font-bold hover:bg-white/10">Marketing Hub</Link>
             <button onClick={fetchApplications} className="inline-flex items-center gap-2 rounded-lg border border-white/15 px-4 py-2 text-sm font-bold hover:bg-white/10">
               <RefreshCw className="h-4 w-4" /> Refresh
