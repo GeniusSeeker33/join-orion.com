@@ -14,7 +14,8 @@ function marketingDevelopmentApi() {
       const devKey = env.VITE_MARKETING_DEV_SUPABASE_PUBLISHABLE_KEY;
       const serviceKey = env.MARKETING_DEV_SUPABASE_SERVICE_ROLE_KEY;
       const openaiKey = env.OPENAI_API_KEY;
-      const configured = Boolean(devUrl && devKey && serviceKey && openaiKey);
+      const isExpectedDevelopmentProject = devUrl === "https://ofmqhrcmdrdrnvtnykyq.supabase.co";
+      const configured = Boolean(isExpectedDevelopmentProject && devKey && serviceKey && openaiKey);
       if (configured) {
         // These values exist only in the local Node server process, never the Vite browser bundle.
         process.env.VITE_SUPABASE_URL = devUrl;
@@ -36,7 +37,7 @@ function marketingDevelopmentApi() {
           res.end(JSON.stringify(body));
         };
         if (req.method !== "POST") return send(405, { error: "Method not allowed" });
-        if (!configured) return send(503, { error: "Development agents require MARKETING_DEV_SUPABASE_SERVICE_ROLE_KEY and OPENAI_API_KEY in .env.local. No agent run was started." });
+        if (!configured) return send(503, { error: "Development agents require the verified development Supabase URL, MARKETING_DEV_SUPABASE_SERVICE_ROLE_KEY, and OPENAI_API_KEY in .env.local. No agent run was started." });
         try {
           let raw = "";
           for await (const chunk of req) {
