@@ -1,3 +1,8 @@
+## Marketing Hub
+
+The integrated hub is available at `/marketing`, linked from both admin dashboards.
+See [the integration audit and setup guide](docs/marketing/INTEGRATION.md) before deploying.
+
 # React + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

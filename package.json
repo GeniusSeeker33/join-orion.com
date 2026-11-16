@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:marketing": "node --test tests/marketing-domain.test.mjs tests/marketing-migration.test.mjs tests/marketing-workflow.test.mjs tests/marketing-agents.test.mjs tests/marketing-agent-api.test.mjs tests/marketing-attention.test.mjs tests/marketing-guardian-qa.test.mjs tests/marketing-guardian-consistency.test.mjs tests/marketing-orchestration.test.mjs tests/marketing-agent-work.test.mjs tests/marketing-guided-work.test.mjs",
+    "test:marketing-ui": "playwright test --config tests/marketing-ui/playwright.config.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",
@@ -16,7 +18,8 @@
     "lucide-react": "^1.16.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router-dom": "^7.15.1"
+    "react-router-dom": "^7.15.1",
+    "openai": "6.34.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -32,6 +35,8 @@
     "postcss": "^8.5.15",
     "supabase": "^2.101.0",
     "tailwindcss": "^4.3.0",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "@electric-sql/pglite": "0.5.8",
+    "@playwright/test": "1.63.0"
   }
 }
