@@ -315,7 +315,8 @@ export default function RecruitingDashboard() {
             </h1>
           </div>
 
-          <nav className="flex gap-4 text-sm">
+          <nav className="flex flex-wrap gap-4 text-sm">
+            <Link className="text-amber-300 underline" to="/marketing">Marketing Hub</Link>
             <Link
               className="text-amber-300 underline"
               to="/admin"

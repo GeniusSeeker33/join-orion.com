@@ -8,12 +8,14 @@ import CareersPage from "./CareersPage.jsx";
 import SalesExecutivePage from "./SalesExecutivePage.jsx";
 import RecruitingDashboard from "./RecruitingDashboard.jsx";
 import "./index.css";
+import MarketingRoute from "./components/marketing/MarketingRoute.jsx";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<App />} />
+        <Route path="/marketing/:section?/:campaignId?" element={<MarketingRoute />} />
         <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/admin/recruiting" element={<RecruitingDashboard />} />
         <Route path="/careers" element={<CareersPage />} />
