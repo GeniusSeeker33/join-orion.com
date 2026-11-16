@@ -1,8 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 
 // Dedicated development project. Never substitute the live Join-Orion client here.
-const url = import.meta.env.VITE_MARKETING_DEV_SUPABASE_URL;
-const key = import.meta.env.VITE_MARKETING_DEV_SUPABASE_PUBLISHABLE_KEY;
+// Vite supplies import.meta.env in browser builds; Node.js test runs do not.
+const env = import.meta.env;
+const url = env?.VITE_MARKETING_DEV_SUPABASE_URL;
+const key = env?.VITE_MARKETING_DEV_SUPABASE_PUBLISHABLE_KEY;
 export const marketingDevClient = url && key ? createClient(url,key,{
   auth: { persistSession:true,autoRefreshToken:true,storageKey:"join-orion-marketing-dev-auth" }
 }) : null;
