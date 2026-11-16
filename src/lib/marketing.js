@@ -69,7 +69,10 @@ export async function runMarketingAgent(request) {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
     body: JSON.stringify(request),
   });
-  const result = await response.json();
+  const raw = await response.text();
+  let result;
+  try { result = raw ? JSON.parse(raw) : null; } catch { result = null; }
+  if (!result || typeof result !== 'object') throw new Error('Agent API did not return JSON. Check the development server and API configuration.');
   if (!response.ok) throw new Error(result.error || `Agent run failed (${result.run?.error_code || 'unavailable'}).`);
   return result.run;
 }
@@ -83,7 +86,10 @@ export async function commandMarketingOrchestration(request) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error('Sign in to assign agent work.');
   const response = await fetch('/api/marketing-orchestration', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify(request) });
-  const result = await response.json();
+  const raw = await response.text();
+  let result;
+  try { result = raw ? JSON.parse(raw) : null; } catch { result = null; }
+  if (!result || typeof result !== 'object') throw new Error('Agent API did not return JSON. Check the development server and API configuration.');
   if (!response.ok) throw new Error(result.error || 'Orchestration unavailable.');
   return result.orchestration;
 }
