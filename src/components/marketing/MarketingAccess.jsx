@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../../lib/supabaseClient';
+import { marketingDevClient as supabase } from '../../lib/marketingDevClient';
 import MarketingWorkspace from '../../pages/marketing/MarketingWorkspace';
 import '../../styles/marketing.css';
 
@@ -12,6 +12,7 @@ export default function MarketingAccess() {
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
+  const [password, setPassword] = useState('');
   useEffect(() => {
     let active = true;
     if (!supabase) return;
@@ -30,12 +31,10 @@ export default function MarketingAccess() {
   async function login(event) {
     event.preventDefault(); setSending(true); setMessage('');
     try {
-      const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: {
-        shouldCreateUser: false,
-        emailRedirectTo: window.location.origin + window.location.pathname,
-      } });
-      setMessage(error ? error.message : 'Check your email for the sign-in link.');
-    } catch { setMessage('Unable to send a sign-in link. Please try again.'); }
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      setPassword('');
+      if (error) setMessage(error.message);
+    } catch { setMessage('Unable to sign in. Please try again.'); }
     finally { setSending(false); }
   }
   return <div className="marketing-hub">
@@ -44,10 +43,11 @@ export default function MarketingAccess() {
       : <main className="marketing-login card">
         <Link to="/">← Back to Orion</Link>
         <h1>Marketing Hub</h1>
-        <p>Sign in with your Orion admin account. Access requires marketing workspace membership.</p>
+        <p>Sign in with your development administrator account. Access requires marketing workspace membership.</p>
         {!supabase ? <p role="alert">Sign-in is not configured.</p> : <form onSubmit={login}>
           <label className="form-field">Email address<input type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} /></label>
-          <button className="btn-primary" disabled={sending}>{sending ? 'Sending…' : 'Email sign-in link'}</button>
+          <label className="form-field">Password<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} /></label>
+          <button className="btn-primary" disabled={sending}>{sending ? 'Signing in…' : 'Sign in'}</button>
         </form>}
         {message && <p role="status">{message}</p>}
       </main>}
