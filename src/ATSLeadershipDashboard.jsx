@@ -44,6 +44,29 @@ export default function ATSLeadershipDashboard({candidates=[],interviews=[],offe
  const bySource=useMemo(()=>[...sources].sort((a,b)=>number(b.hires)-number(a.hires)),[sources]);
  const sourceMax=Math.max(1,...bySource.map(s=>number(s.hires)));
  const rows=reqs.map(r=>{const a=links.filter(x=>x.requisition_id===r.id);return {...r,hired:new Set(a.filter(x=>x.stage==="hired").map(x=>x.candidate_id)).size,remaining:Math.max(0,number(r.openings)-new Set(a.filter(x=>x.stage==="hired").map(x=>x.candidate_id)).size),inProcess:a.filter(x=>["new","screening","interview","offer"].includes(x.stage)).length,interviewing:a.filter(x=>x.stage==="interview").length,offered:a.filter(x=>x.stage==="offer").length,screening:a.filter(x=>["new","screening"].includes(x.stage)).length};});
+
+ const hiredCandidates = links
+  .filter(a => a.stage === "hired")
+  .map(a => {
+   const candidate = candidates.find(c => String(c.id) === String(a.candidate_id));
+   const employment = employees
+    .filter(e => String(e.candidate_id) === String(a.candidate_id))
+    .sort((a,b) => String(b.start_date||"").localeCompare(String(a.start_date||"")))[0];
+   const requisition = reqs.find(r => String(r.id) === String(a.requisition_id));
+   return {
+    id: a.candidate_id,
+    name: candidate?.full_name || "Candidate",
+    position: requisition?.title || "Position not recorded",
+    startDate: employment?.start_date || null,
+    status: employment?.employment_status || "not_started"
+   };
+  })
+  .filter((c,i,arr) => arr.findIndex(x => String(x.id) === String(c.id) && x.position === c.position) === i)
+  .sort((a,b) => {
+   if (!a.startDate) return 1;
+   if (!b.startDate) return -1;
+   return a.startDate.localeCompare(b.startDate);
+  });
  const stat=(label,value,detail,tone="text-white")=><div className={panel}><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">{label}</p><p className={"text-3xl font-bold mt-2 "+tone}>{value}</p><p className="text-xs text-slate-400 mt-2">{detail}</p></div>;
  return <div className="space-y-5">
  <div className="flex flex-wrap justify-between items-end gap-4"><div><p className="text-xs tracking-widest uppercase text-amber-300 font-semibold">Orion Wholesale · Executive recruiting scorecard</p><h2 className="text-3xl font-bold mt-1">Talent acquisition review</h2><p className="text-sm text-slate-400 mt-1">{fmt(start)} – {fmt(end)} · {periodName} view · Development data</p></div><div className="flex flex-wrap items-end gap-2"><label className="text-xs text-slate-300">Reporting period<select value={period} onChange={e=>setPeriod(e.target.value)} className="block mt-1 rounded-lg bg-slate-800 border border-slate-600 p-2 text-sm"><option value="week">Week</option><option value="month">Month</option><option value="quarter">Quarter</option><option value="year">Year</option><option value="last_year">Last year</option></select></label><label className="text-xs text-slate-300">Reference date<input type="date" value={anchor} onChange={e=>{if(e.target.value)setAnchor(e.target.value);}} className="block mt-1 rounded-lg bg-slate-800 border border-slate-600 p-2 text-sm"/></label><button className="rounded-lg border border-slate-600 px-3 py-2 text-sm" onClick={()=>{setAnchor(iso(new Date()));setPeriod("week");}}>This week</button><button className="rounded-lg bg-amber-300 text-slate-950 font-semibold px-4 py-2 text-sm disabled:opacity-50" disabled={busy} onClick={refresh}>{busy?"Loading…":"Refresh"}</button></div></div>
@@ -52,7 +75,37 @@ export default function ATSLeadershipDashboard({candidates=[],interviews=[],offe
  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{stat("Open requisitions",reqs.length,"Current open positions")}{stat("Open-seat targets",seats,"Target seats, not vacancies after hires")}{stat("Remaining vacancies",remainingSeats,"Target seats minus current requisition hires","text-emerald-300")}{stat("No-shows · selected period",missed,attended+" attended interviews","text-amber-300")}</div>
  <div className="grid lg:grid-cols-5 gap-4">
  <section className={panel+" lg:col-span-3"}><div className="flex items-baseline justify-between gap-3 mb-5"><div><h3 className="text-lg font-semibold">Hiring progress by position</h3><p className="text-xs text-slate-400">Hired-stage assignments / target seats · active recruiting shown separately</p></div><strong className="text-amber-300 text-xl">{hired} / {seats}</strong></div><div className="space-y-5">{rows.map(r=><div key={r.id}><div className="flex justify-between gap-3 text-sm mb-2"><span className="font-semibold">{r.title}<span className="block text-xs text-slate-400 font-normal">{r.department} · {r.inProcess} active candidates</span></span><span className="font-semibold">{r.hired} / {r.openings}</span></div><div className="h-3 bg-slate-800 rounded-full overflow-hidden"><div className="h-full rounded-full bg-emerald-400" style={{width:pct(r.hired,r.openings)+"%"}}/></div><div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs"><span className="text-emerald-300">{r.hired} hired · {r.remaining} remaining</span><span className="text-sky-300">{r.interviewing} interviewing</span><span className="text-amber-300">{r.offered} in offer</span><span className="text-slate-300">{r.screening} new / screening</span></div></div>)}</div></section>
- <section className={panel+" lg:col-span-2"}><h3 className="text-lg font-semibold">Current recruiting funnel</h3><p className="text-xs text-slate-400 mb-5">Snapshot of open-position assignments, not conversion rates</p><div className="space-y-4">{STAGES.map(([key,label],i)=>{const count=stage(key);return <div key={key}><div className="flex justify-between text-sm mb-1"><span>{label}</span><strong>{count}</strong></div><div className="h-4 bg-slate-800 rounded overflow-hidden"><div className={"h-full rounded "+(key==="hired"?"bg-emerald-400":"bg-sky-400")} style={{width:pct(count,Math.max(1,...STAGES.map(([s])=>stage(s))))+"%"}}/></div></div>})}</div></section>
+ <section className={panel+" lg:col-span-2"}><h3 className="text-lg font-semibold">Current recruiting funnel</h3><p className="text-xs text-slate-400 mb-5">Snapshot of open-position assignments, not conversion rates</p><div className="space-y-4">{STAGES.map(([key,label],i)=>{const count=stage(key);return <div key={key}><div className="flex justify-between text-sm mb-1"><span>{label}</span><strong>{count}</strong></div><div className="h-4 bg-slate-800 rounded overflow-hidden"><div className={"h-full rounded "+(key==="hired"?"bg-emerald-400":"bg-sky-400")} style={{width:pct(count,Math.max(1,...STAGES.map(([s])=>stage(s))))+"%"}}/></div></div>})}
+ <div className="mt-6 border-t border-slate-700 pt-4">
+  <h4 className="font-semibold text-sm mb-3">Hired candidates ({hiredCandidates.length})</h4>
+  <div className="overflow-x-auto">
+   <table className="w-full text-sm">
+    <thead>
+     <tr className="text-left text-slate-400 border-b border-slate-700">
+      <th className="py-2 pr-3">Candidate</th>
+      <th className="py-2 pr-3">Position</th>
+      <th className="py-2 pr-3">Start date</th>
+      <th className="py-2">Status</th>
+     </tr>
+    </thead>
+    <tbody>
+     {hiredCandidates.map((c,i) => (
+      <tr key={String(c.id)+"-"+i} className="border-b border-slate-800">
+       <td className="py-2 pr-3 font-medium">{c.name}</td>
+       <td className="py-2 pr-3">{c.position}</td>
+       <td className="py-2 pr-3">{c.startDate || "Date pending"}</td>
+       <td className="py-2">
+        <span className={c.status==="active"?"text-emerald-300":c.status==="not_started"?"text-sky-300":"text-slate-300"}>
+         {c.status==="active"?"Started":c.status==="not_started"?"Scheduled":c.status.replaceAll("_"," ")}
+        </span>
+       </td>
+      </tr>
+     ))}
+    </tbody>
+   </table>
+  </div>
+ </div>
+</div></section>
  </div>
  <div className="grid lg:grid-cols-2 gap-4"><section className={panel}><h3 className="text-lg font-semibold">Recruiting sources producing hires</h3><p className="text-xs text-slate-400 mb-4">Historical unique hires, not selected-week hires</p><div className="space-y-3">{bySource.map(s=><div key={s.source}><div className="flex justify-between text-sm mb-1 gap-3"><span>{s.source||"Not recorded"}</span><span>{s.hires} hires · {s.candidates} candidates</span></div><div className="h-2 rounded bg-slate-800"><div className="h-full rounded bg-sky-400" style={{width:pct(number(s.hires),sourceMax)+"%"}}/></div></div>)}</div>{!bySource.length&&<p className="text-sm text-slate-400">No source report available.</p>}</section>
  <section className={panel}><div className="flex justify-between items-center gap-3"><div><h3 className="text-lg font-semibold">Leadership attention</h3><p className="text-xs text-slate-400">Current unresolved recruiting exceptions</p></div><strong className="text-2xl text-amber-300">{attention.length}</strong></div><div className="mt-3 space-y-2">{attention.slice(0,8).map((x,i)=><div key={i} className="flex justify-between gap-3 py-2 border-b border-slate-700/70 text-sm"><div><strong>{x.name}</strong><p className="text-xs text-slate-400">{x.position}</p></div><span className="text-amber-300 text-xs text-right">{x.type}</span></div>)}{!attention.length&&<p className="text-sm text-slate-400">No unresolved no-show or ghosted-offer flags.</p>}</div></section></div>
