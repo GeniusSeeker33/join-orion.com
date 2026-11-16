@@ -61,3 +61,36 @@ test('legacy unlinked narrative uses only one exact named rule, never ambiguous 
  value.findings[0].finding = 'No unsupported incentive claims are present.';
  assert.deepEqual(guardianInconsistencies(value, context), []);
 });
+
+test('Guardian retries missing constraint coverage once and retains both attempts usage', async () => {
+ let calls = 0;
+ const phases = [];
+ const valid = output('satisfied', 'Assessment: satisfied. No unverified claims found.');
+ const result = await inferMarketing({
+  request: { agent_key: 'guardian' }, context, onPhase: phase => phases.push(phase),
+  model: { responses: { create: async () => {
+   calls++;
+   return { status: 'completed', output_text: JSON.stringify(calls === 1 ? { ...valid, constraint_evaluations: [] } : valid),
+    usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 } };
+  } } }
+ });
+ assert.equal(calls, 2);
+ assert.deepEqual(result.output.constraint_evaluations, valid.constraint_evaluations);
+ assert.equal(result.usage.total_tokens, 60);
+ assert.ok(phases.includes('constraint_evaluation_mismatch'));
+});
+
+test('Guardian rejects repeated constraint coverage mismatch without applying results', async () => {
+ let calls = 0;
+ const phases = [];
+ await assert.rejects(inferMarketing({
+  request: { agent_key: 'guardian' }, context, onPhase: phase => phases.push(phase),
+  model: { responses: { create: async () => {
+   calls++;
+   return { status: 'completed', output_text: JSON.stringify({ ...output('satisfied', 'Assessment: satisfied.'), constraint_evaluations: [] }),
+    usage: { total_tokens: 30 } };
+  } } }
+ }), /Invalid constraint evaluation coverage/);
+ assert.equal(calls, 2);
+ assert.equal(phases.at(-1), 'constraint_evaluation_mismatch');
+});
