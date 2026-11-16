@@ -1,4 +1,4 @@
-import { supabase } from "./supabaseClient.js";
+import { marketingDevClient as supabase } from "./marketingDevClient.js";
 import { deriveMarketingAttention } from './marketingAttention.js';
 
 export const CAMPAIGN_STATUSES = ["draft", "planned", "active", "paused", "completed", "cancelled"];
