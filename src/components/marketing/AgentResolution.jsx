@@ -18,7 +18,15 @@ export default function AgentResolution({ data, run, onDone }) {
     && asset?.approval_state === 'draft' && asset.publication_state === 'unpublished'
     && asset.revision === run.input_metadata?.asset?.revision
     && !run.output_metadata?.deterministic_qa?.some(check => check.passed === false);
-  if (!strategist && !guardian) return null;
+  const guardianRun = run.agent_key === 'guardian' && result?.recommendation === 'ready_for_human_review';
+  const guardianBlockReason = !guardianRun ? null
+    : !asset ? 'The reviewed asset is unavailable. Open Content to inspect the saved asset.'
+    : asset.approval_state !== 'draft' ? `The asset is currently ${asset.approval_state.replaceAll('_', ' ')}. Open Content to inspect its current review status.`
+    : asset.publication_state !== 'unpublished' ? 'The asset is no longer unpublished and cannot be submitted from this run.'
+    : asset.revision !== run.input_metadata?.asset?.revision ? 'The asset changed since this Guardian review. Review the latest saved revision before submitting.'
+    : run.output_metadata?.deterministic_qa?.some(check => check.passed === false) ? 'A deterministic QA check failed. Correct the asset and run Guardian again.'
+    : null;
+  if (!strategist && !guardianRun) return null;
   async function resolve(action) {
     setBusy(true); setError('');
     try {
@@ -34,7 +42,8 @@ export default function AgentResolution({ data, run, onDone }) {
       {strategist && <><p>Select proposed tasks to create. Owners and due dates remain unset.</p>{result?.proposed_tasks?.map((task, index) => <label key={index}><input type="checkbox" checked={selected.includes(index)} onChange={event => setSelected(values => event.target.checked ? [...values, index] : values.filter(value => value !== index))} /> {task}</label>)}</>}
       <label className="form-field"><span>Optional human note</span><textarea maxLength="4000" value={note} onChange={event => setNote(event.target.value)} /></label>
       {strategist ? <><button type="button" className="btn-secondary" onClick={() => resolve('accept_plan')}>Accept plan</button><button type="button" className="btn-primary" disabled={!selected.length} onClick={() => resolve('create_tasks')}>Create selected tasks</button><button type="button" className="btn-secondary" onClick={() => resolve('dismiss')}>Dismiss / no action</button></>
-        : <><p>Submit this revision for a separate human decision. This does not approve the asset.</p><button type="button" className="btn-primary" onClick={() => resolve('send_to_approval')}>Send to Approval</button></>}
+        : guardian ? <><p>Submit this revision for a separate human decision. This does not approve the asset.</p><button type="button" className="btn-primary" onClick={() => resolve('send_to_approval')}>Send to Approval</button></>
+        : <><p role="status">{guardianBlockReason}</p>{asset && <Link to={`/marketing/campaigns/${run.campaign_id}?asset=${asset.id}`}>Open current asset and review controls</Link>}</>}
       {busy && <p role="status">Recording human action…</p>}
     </fieldset>
     {error && <p className="marketing-error" role="alert">{error}</p>}
