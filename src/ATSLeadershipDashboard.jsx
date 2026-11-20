@@ -13,9 +13,22 @@ export default function ATSLeadershipDashboard({candidates=[],interviews=[],offe
  const [anchor,setAnchor]=useState(()=>iso(new Date()));
  const [data,setData]=useState({requisitions:[],assignments:[]});
  const [sources,setSources]=useState([]);
+ const [employmentRecords,setEmploymentRecords]=useState([]);
+ const [employmentError,setEmploymentError]=useState("");
  const [error,setError]=useState("");
  const [busy,setBusy]=useState(true);
- async function refresh(){setBusy(true);const [r,s]=await Promise.all([supabase.rpc("ats_admin_requisitions"),supabase.rpc("ats_admin_referral_report")]);if(r.error||s.error)setError(r.error?.message||s.error?.message);else{setData(r.data||{requisitions:[],assignments:[]});setSources(Array.isArray(s.data)?s.data:[]);setError("");}setBusy(false);}
+ async function refresh(){setBusy(true);const [r,s,e]=await Promise.all([
+  supabase.rpc("ats_admin_requisitions"),
+  supabase.rpc("ats_admin_referral_report"),
+  supabase.rpc("ats_admin_employment_report")
+ ]);if(r.error||s.error)setError(r.error?.message||s.error?.message);else{setData(r.data||{requisitions:[],assignments:[]});setSources(Array.isArray(s.data)?s.data:[]);setError("");}if(e.error){
+  setEmploymentError(e.error.message);
+  setEmploymentRecords([]);
+ }else{
+  setEmploymentError("");
+  setEmploymentRecords(Array.isArray(e.data)?e.data:[]);
+ }
+ setBusy(false);}
  useEffect(()=>{refresh();},[]);
  const selected=new Date(anchor+"T12:00:00");
  const year=selected.getFullYear(),month=selected.getMonth();
@@ -34,10 +47,10 @@ export default function ATSLeadershipDashboard({candidates=[],interviews=[],offe
  const attended=thisInterviews.filter(i=>i.attendance_status==="attended").length;
  const missed=thisInterviews.filter(i=>i.attendance_status==="no_show").length;
  const thisOffers=offers.filter(o=>between(o.request_date,start,end));
- const started=employees.filter(e=>between(e.start_date,start,end)&&["active","terminated"].includes(e.employment_status));
- const scheduled=employees.filter(e=>between(e.start_date,start,end)&&e.employment_status==="not_started");
- const priorStarted=employees.filter(e=>between(e.start_date,prevStart,plusDays(start,-1))&&["active","terminated"].includes(e.employment_status));
- const active=employees.filter(e=>e.employment_status==="active").length;
+ const started=employmentRecords.filter(e=>between(e.start_date,start,end)&&["active","terminated"].includes(e.employment_status));
+ const scheduled=employmentRecords.filter(e=>between(e.start_date,start,end)&&e.employment_status==="not_started");
+ const priorStarted=employmentRecords.filter(e=>between(e.start_date,prevStart,plusDays(start,-1))&&["active","terminated"].includes(e.employment_status));
+ const active=employmentRecords.filter(e=>e.employment_status==="active").length;
  const noShowIds=new Set(interviews.filter(i=>i.attendance_status==="no_show").map(i=>i.candidate_id));
  const pending=links.filter(a=>a.stage==="interview"&&noShowIds.has(a.candidate_id)&&!["reschedule","no_show_closed","proceed"].includes(a.interview_disposition));
  const attention=[...pending.map(a=>({name:candidates.find(c=>c.id===a.candidate_id)?.full_name||"Candidate",type:"No-show follow-up",position:reqs.find(r=>r.id===a.requisition_id)?.title||"Position"})),...links.filter(a=>a.stage==="offer"&&a.candidate_outcome==="ghosted").map(a=>({name:candidates.find(c=>c.id===a.candidate_id)?.full_name||"Candidate",type:"Ghosted after offer",position:reqs.find(r=>r.id===a.requisition_id)?.title||"Position"}))];
@@ -49,7 +62,7 @@ export default function ATSLeadershipDashboard({candidates=[],interviews=[],offe
   .filter(a => a.stage === "hired")
   .map(a => {
    const candidate = candidates.find(c => String(c.id) === String(a.candidate_id));
-   const employment = employees
+   const employment = employmentRecords
     .filter(e => String(e.candidate_id) === String(a.candidate_id))
     .sort((a,b) => String(b.start_date||"").localeCompare(String(a.start_date||"")))[0];
    const requisition = reqs.find(r => String(r.id) === String(a.requisition_id));
@@ -58,9 +71,10 @@ export default function ATSLeadershipDashboard({candidates=[],interviews=[],offe
     name: candidate?.full_name || "Candidate",
     position: requisition?.title || "Position not recorded",
     startDate: employment?.start_date || null,
-    status: employment?.employment_status || "not_started"
+    status: employment?.employment_status || "unknown"
    };
   })
+  .filter(c => ["active","not_started"].includes(c.status))
   .filter((c,i,arr) => arr.findIndex(x => String(x.id) === String(c.id) && x.position === c.position) === i)
   .sort((a,b) => {
    if (!a.startDate) return 1;
@@ -77,7 +91,7 @@ export default function ATSLeadershipDashboard({candidates=[],interviews=[],offe
  <section className={panel+" lg:col-span-3"}><div className="flex items-baseline justify-between gap-3 mb-5"><div><h3 className="text-lg font-semibold">Hiring progress by position</h3><p className="text-xs text-slate-400">Hired-stage assignments / target seats · active recruiting shown separately</p></div><strong className="text-amber-300 text-xl">{hired} / {seats}</strong></div><div className="space-y-5">{rows.map(r=><div key={r.id}><div className="flex justify-between gap-3 text-sm mb-2"><span className="font-semibold">{r.title}<span className="block text-xs text-slate-400 font-normal">{r.department} · {r.inProcess} active candidates</span></span><span className="font-semibold">{r.hired} / {r.openings}</span></div><div className="h-3 bg-slate-800 rounded-full overflow-hidden"><div className="h-full rounded-full bg-emerald-400" style={{width:pct(r.hired,r.openings)+"%"}}/></div><div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs"><span className="text-emerald-300">{r.hired} hired · {r.remaining} remaining</span><span className="text-sky-300">{r.interviewing} interviewing</span><span className="text-amber-300">{r.offered} in offer</span><span className="text-slate-300">{r.screening} new / screening</span></div></div>)}</div></section>
  <section className={panel+" lg:col-span-2"}><h3 className="text-lg font-semibold">Current recruiting funnel</h3><p className="text-xs text-slate-400 mb-5">Snapshot of open-position assignments, not conversion rates</p><div className="space-y-4">{STAGES.map(([key,label],i)=>{const count=stage(key);return <div key={key}><div className="flex justify-between text-sm mb-1"><span>{label}</span><strong>{count}</strong></div><div className="h-4 bg-slate-800 rounded overflow-hidden"><div className={"h-full rounded "+(key==="hired"?"bg-emerald-400":"bg-sky-400")} style={{width:pct(count,Math.max(1,...STAGES.map(([s])=>stage(s))))+"%"}}/></div></div>})}
  <div className="mt-6 border-t border-slate-700 pt-4">
-  <h4 className="font-semibold text-sm mb-3">Hired candidates ({hiredCandidates.length})</h4>
+  <h4 className="font-semibold text-sm mb-3">Current hires and scheduled starts ({hiredCandidates.length})</h4>
   <div className="overflow-x-auto">
    <table className="w-full text-sm">
     <thead>
