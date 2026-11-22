@@ -7,6 +7,7 @@ import AdminDashboard from "./AdminDashboard.jsx";
 import CareersPage from "./CareersPage.jsx";
 import SalesExecutivePage from "./SalesExecutivePage.jsx";
 import RecruitingDashboard from "./RecruitingDashboard.jsx";
+import ATSWorkspace from "./ATSWorkspace.jsx";
 import "./index.css";
 import MarketingRoute from "./components/marketing/MarketingRoute.jsx";
 const ReferralRoute = React.lazy(() => import('./components/referrals/ReferralRoute.jsx'));
@@ -21,7 +22,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <Route path="/marketing/:section?/:campaignId?" element={<MarketingRoute />} />
         <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/admin/recruiting" element={<RecruitingDashboard />} />
-        <Route path="/ats" element={<RecruitingDashboard />} />
+        <Route path="/ats" element={<ATSWorkspace />} />
         <Route path="/careers" element={<CareersPage />} />
         <Route path="/sales-executive" element={<SalesExecutivePage />} />
       </Routes>
