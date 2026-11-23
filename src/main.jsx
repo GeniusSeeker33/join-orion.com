@@ -5,6 +5,7 @@ import { Analytics } from "@vercel/analytics/react";
 import App from "./App.jsx";
 import AdminDashboard from "./AdminDashboard.jsx";
 import CareersPage from "./CareersPage.jsx";
+import ReturnsFollowupPage from "./ReturnsFollowupPage.jsx";
 import SalesExecutivePage from "./SalesExecutivePage.jsx";
 import RecruitingDashboard from "./RecruitingDashboard.jsx";
 import "./index.css";
@@ -23,6 +24,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <Route path="/admin/recruiting" element={<RecruitingDashboard />} />
         <Route path="/ats" element={<RecruitingDashboard />} />
         <Route path="/careers" element={<CareersPage />} />
+        <Route path="/returns-assessment" element={<ReturnsFollowupPage />} />
         <Route path="/sales-executive" element={<SalesExecutivePage />} />
       </Routes>
       <Analytics />
