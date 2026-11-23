@@ -297,7 +297,7 @@ export default function CareersPage({ returnsOnly = false }) {
               </div>
             ))}
           </div>
-        </section>
+        </section>}
 
         <section id="open-roles" className={returnsOnly ? "sr-only" : "py-12"}>
           <h2 className="text-3xl font-black">Open roles</h2>
