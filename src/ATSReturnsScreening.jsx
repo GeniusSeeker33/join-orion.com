@@ -19,7 +19,7 @@ function objectiveScore(a){
  return {details,total:details.reduce((n,d)=>n+(d.points||0),0),complete:details.every(d=>d.points!==null)};
 }
 
-export default function ATSReturnsScreening({filterEmail=null,expectedName=null,onImportCandidate=null,importResults={},directoryCandidates=[]}){
+export default function ATSReturnsScreening({filterEmail=null,expectedName=null,onImportCandidate=null,importResults={},directoryCandidates=[],onScheduled=null}){
  const [session,setSession]=useState(null),[checking,setChecking]=useState(true);
  const [records,setRecords]=useState([]),[loading,setLoading]=useState(false),[error,setError]=useState("");
  const [showTest,setShowTest]=useState(false),[sortByScore,setSortByScore]=useState(true);
@@ -40,7 +40,7 @@ export default function ATSReturnsScreening({filterEmail=null,expectedName=null,
    .then(({data,error:err})=>{if(active){setRecords(data||[]);setError(err?.message||"");setLoading(false);}});
   return()=>{active=false;};
  },[authorized]);
- async function saveInterview(r){const d=drafts[r.id]||{};const update={interview_status:d.interview_status??r.interview_status??"assessment_completed",interview_at:d.interview_at===undefined?r.interview_at:(d.interview_at?new Date(d.interview_at).toISOString():null),interview_teams_url:d.interview_teams_url??r.interview_teams_url??null,interview_notes:d.interview_notes??r.interview_notes??null};setSaving(v=>({...v,[r.id]:"Saving…"}));const {data,error:err}=await supabase.from("candidate_applications").update(update).eq("id",r.id).select("id,interview_status,interview_at,interview_teams_url,interview_notes").single();if(err){setSaving(v=>({...v,[r.id]:err.message}));return;}setRecords(v=>v.map(item=>item.id===r.id?{...item,...data}:item));setDrafts(v=>{const next={...v};delete next[r.id];return next});setSaving(v=>({...v,[r.id]:"Saved"}));}
+ async function saveInterview(r){const d=drafts[r.id]||{};const update={interview_status:d.interview_status??r.interview_status??"assessment_completed",interview_at:d.interview_at===undefined?r.interview_at:(d.interview_at?new Date(d.interview_at).toISOString():null),interview_teams_url:d.interview_teams_url??r.interview_teams_url??null,interview_notes:d.interview_notes??r.interview_notes??null};setSaving(v=>({...v,[r.id]:"Saving…"}));const {data,error:err}=await supabase.from("candidate_applications").update(update).eq("id",r.id).select("id,interview_status,interview_at,interview_teams_url,interview_notes").single();if(err){setSaving(v=>({...v,[r.id]:err.message}));return;}setRecords(v=>v.map(item=>item.id===r.id?{...item,...data}:item));setDrafts(v=>{const next={...v};delete next[r.id];return next});let message="Saved";if(update.interview_status==="scheduled"&&onScheduled){message=await onScheduled(r);}setSaving(v=>({...v,[r.id]:message}));}
  async function requestCode(e){e.preventDefault();setBusy(true);setError("");
   const {error:err}=await supabase.auth.signInWithOtp({email:ADMIN_EMAIL,options:{shouldCreateUser:false}});
   setBusy(false);if(err)setError(err.message);else setRequested(true);
