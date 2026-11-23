@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from "react";
-import {supabase} from "./lib/supabaseClient";
+import {marketingDevClient as supabase} from "./lib/marketingDevClient";
 
 const ADMIN_EMAIL="desiree@orionwholesaleonline.com";
 const TITLE="Customer Service & Returns Specialist — Compliance Support";
@@ -25,7 +25,6 @@ export default function ATSReturnsScreening({filterEmail=null,expectedName=null,
  const [records,setRecords]=useState([]),[loading,setLoading]=useState(false),[error,setError]=useState("");
  const [showTest,setShowTest]=useState(false),[sortByScore,setSortByScore]=useState(true);
  const [saving,setSaving]=useState({}),[drafts,setDrafts]=useState({});
- const [otp,setOtp]=useState(""),[requested,setRequested]=useState(false),[busy,setBusy]=useState(false);
  useEffect(()=>{
   if(!supabase){setChecking(false);setError("Live recruiting connection is not configured.");return;}
   let active=true;
@@ -33,12 +32,9 @@ export default function ATSReturnsScreening({filterEmail=null,expectedName=null,
   const {data:sub}=supabase.auth.onAuthStateChange((_event,next)=>{if(active){setSession(next);setChecking(false);}});
   return()=>{active=false;sub.subscription.unsubscribe();};
  },[]);
- const authorized=session?.user?.email?.toLowerCase()===ADMIN_EMAIL;
+ const authorized=!!session?.access_token;
  useEffect(()=>{if(!authorized)return;let active=true;setLoading(true);setError("");
-  supabase.from("candidate_applications")
-   .select("id,first_name,last_name,email,phone,resume_path,position_title,created_at,screening_answers,interview_status,interview_at,interview_teams_url,interview_notes")
-   .eq("position_title",TITLE).order("created_at",{ascending:false})
-   .then(({data,error:err})=>{if(active){setRecords(data||[]);setError(err?.message||"");setLoading(false);}});
+  supabase.functions.invoke("ats-returns-access",{body:{action:"list"}}).then(({data,error:err})=>{if(active){setRecords(data?.records||[]);setError(data?.error||err?.message||"");setLoading(false);}});
   return()=>{active=false;};
  },[authorized]);
  useEffect(()=>{
@@ -48,32 +44,10 @@ export default function ATSReturnsScreening({filterEmail=null,expectedName=null,
   syncedSignature.current=signature;
   onBulkSync(records);
  },[authorized,loading,records,onBulkSync,bulkSyncRunning]);
- async function saveInterview(r){const d=drafts[r.id]||{};const update={interview_status:d.interview_status??r.interview_status??"assessment_completed",interview_at:d.interview_at===undefined?r.interview_at:(d.interview_at?new Date(d.interview_at).toISOString():null),interview_teams_url:d.interview_teams_url??r.interview_teams_url??null,interview_notes:d.interview_notes??r.interview_notes??null};setSaving(v=>({...v,[r.id]:"Saving…"}));const {data,error:err}=await supabase.from("candidate_applications").update(update).eq("id",r.id).select("id,interview_status,interview_at,interview_teams_url,interview_notes").single();if(err){setSaving(v=>({...v,[r.id]:err.message}));return;}setRecords(v=>v.map(item=>item.id===r.id?{...item,...data}:item));setDrafts(v=>{const next={...v};delete next[r.id];return next});let message="Saved";if(update.interview_status==="scheduled"&&onScheduled){message=await onScheduled(r);}setSaving(v=>({...v,[r.id]:message}));}
- async function requestCode(e){e.preventDefault();setBusy(true);setError("");
-  const {error:err}=await supabase.auth.signInWithOtp({email:ADMIN_EMAIL,options:{shouldCreateUser:false}});
-  setBusy(false);if(err)setError(err.message);else setRequested(true);
- }
- async function verifyCode(e){e.preventDefault();setBusy(true);setError("");
-  const {error:err}=await supabase.auth.verifyOtp({email:ADMIN_EMAIL,token:otp,type:"email"});
-  setBusy(false);if(err)setError(err.message);else setOtp("");
- }
- async function openResume(path){setError("");
-  const {data,error:err}=await supabase.storage.from("resumes").createSignedUrl(path,60);
-  if(err||!data?.signedUrl){setError(err?.message||"Unable to open resume.");return;}
-  window.open(data.signedUrl,"_blank","noopener,noreferrer");
- }
+ async function saveInterview(r){const d=drafts[r.id]||{};const update={interview_status:d.interview_status??r.interview_status??"assessment_completed",interview_at:d.interview_at===undefined?r.interview_at:(d.interview_at?new Date(d.interview_at).toISOString():null),interview_teams_url:d.interview_teams_url??r.interview_teams_url??null,interview_notes:d.interview_notes??r.interview_notes??null};setSaving(v=>({...v,[r.id]:"Saving…"}));const {data,error:err}=await supabase.functions.invoke("ats-returns-access",{body:{action:"update",id:r.id,update}});if(err||data?.error||!data?.record){setSaving(v=>({...v,[r.id]:data?.error||err?.message||"Unable to save"}));return;}setRecords(v=>v.map(item=>item.id===r.id?{...item,...data.record}:item));setDrafts(v=>{const next={...v};delete next[r.id];return next});let message="Saved";if(update.interview_status==="scheduled"&&onScheduled){message=await onScheduled(r);}setSaving(v=>({...v,[r.id]:message}));}
+ async function openResume(path){setError("");const {data,error:err}=await supabase.functions.invoke("ats-returns-access",{body:{action:"resume",path}});if(err||data?.error||!data?.url){setError(data?.error||err?.message||"Unable to open resume");return;}window.open(data.url,"_blank","noopener,noreferrer");}
  if(checking)return <p className="text-slate-400">Checking recruiting access…</p>;
- if(!authorized)return <section className="max-w-lg space-y-4 rounded-xl border border-slate-700 bg-slate-900 p-5">
-  <h2 className="text-xl font-bold">Returns Screening — secure recruiting access</h2>
-  <p className="text-sm text-slate-300">These applications are stored in Orion's live recruiting database. Verify your recruiter email to review the responses. Your ATS workspace session stays signed in.</p>
-  {session&&<p className="text-amber-300 text-sm">The current live recruiting session is not authorized for this view.</p>}
-  <form onSubmit={requested?verifyCode:requestCode} className="space-y-3">
-   <p className="text-sm">Recruiter: {ADMIN_EMAIL}</p>
-   {requested&&<input aria-label="Eight-digit recruiting code" required inputMode="numeric" pattern="[0-9]{8}" maxLength={8} value={otp} onChange={e=>setOtp(e.target.value.replace(/\\D/g,"").slice(0,8))} className="w-full rounded bg-slate-800 p-3 text-white" placeholder="8-digit email code"/>}
-   <button disabled={busy||(requested&&otp.length!==8)} className="rounded bg-amber-400 px-4 py-2 font-bold text-black disabled:opacity-50">{busy?"Please wait…":requested?"Verify code":"Send sign-in code"}</button>
-  </form>
-  {error&&<p role="alert" className="text-rose-300">{error}</p>}
- </section>;
+ if(!authorized)return <p className="text-amber-300">Sign in to the ATS to review live screening records.</p>;
  if(loading)return <p className="text-slate-400">Loading screening responses…</p>;
  return <section className="space-y-4">
   {onBulkSync&&<p className="text-xs text-slate-400">Completed assessments are automatically synchronized when this view loads. Identity conflicts are held for review; existing pipeline stages are preserved.</p>}
