@@ -1,4 +1,4 @@
-import {useEffect,useState} from "react";
+import {useEffect,useRef,useState} from "react";
 import {supabase} from "./lib/supabaseClient";
 
 const ADMIN_EMAIL="desiree@orionwholesaleonline.com";
@@ -19,7 +19,8 @@ function objectiveScore(a){
  return {details,total:details.reduce((n,d)=>n+(d.points||0),0),complete:details.every(d=>d.points!==null)};
 }
 
-export default function ATSReturnsScreening({filterEmail=null,expectedName=null,onImportCandidate=null,importResults={},directoryCandidates=[],onScheduled=null}){
+export default function ATSReturnsScreening({filterEmail=null,expectedName=null,onImportCandidate=null,importResults={},directoryCandidates=[],onScheduled=null,onBulkSync=null,bulkSyncRunning=false}){
+ const syncedSignature=useRef("");
  const [session,setSession]=useState(null),[checking,setChecking]=useState(true);
  const [records,setRecords]=useState([]),[loading,setLoading]=useState(false),[error,setError]=useState("");
  const [showTest,setShowTest]=useState(false),[sortByScore,setSortByScore]=useState(true);
@@ -40,6 +41,13 @@ export default function ATSReturnsScreening({filterEmail=null,expectedName=null,
    .then(({data,error:err})=>{if(active){setRecords(data||[]);setError(err?.message||"");setLoading(false);}});
   return()=>{active=false;};
  },[authorized]);
+ useEffect(()=>{
+  if(!authorized||loading||!onBulkSync||!records.length||bulkSyncRunning)return;
+  const signature=records.filter(r=>r.screening_answers&&r.first_name!=="TestDes"&&!/^test/i.test(r.first_name||"")).map(r=>r.id).sort().join("|");
+  if(!signature||syncedSignature.current===signature)return;
+  syncedSignature.current=signature;
+  onBulkSync(records);
+ },[authorized,loading,records,onBulkSync,bulkSyncRunning]);
  async function saveInterview(r){const d=drafts[r.id]||{};const update={interview_status:d.interview_status??r.interview_status??"assessment_completed",interview_at:d.interview_at===undefined?r.interview_at:(d.interview_at?new Date(d.interview_at).toISOString():null),interview_teams_url:d.interview_teams_url??r.interview_teams_url??null,interview_notes:d.interview_notes??r.interview_notes??null};setSaving(v=>({...v,[r.id]:"Saving…"}));const {data,error:err}=await supabase.from("candidate_applications").update(update).eq("id",r.id).select("id,interview_status,interview_at,interview_teams_url,interview_notes").single();if(err){setSaving(v=>({...v,[r.id]:err.message}));return;}setRecords(v=>v.map(item=>item.id===r.id?{...item,...data}:item));setDrafts(v=>{const next={...v};delete next[r.id];return next});let message="Saved";if(update.interview_status==="scheduled"&&onScheduled){message=await onScheduled(r);}setSaving(v=>({...v,[r.id]:message}));}
  async function requestCode(e){e.preventDefault();setBusy(true);setError("");
   const {error:err}=await supabase.auth.signInWithOtp({email:ADMIN_EMAIL,options:{shouldCreateUser:false}});
@@ -68,6 +76,7 @@ export default function ATSReturnsScreening({filterEmail=null,expectedName=null,
  </section>;
  if(loading)return <p className="text-slate-400">Loading screening responses…</p>;
  return <section className="space-y-4">
+  {onBulkSync&&<p className="text-xs text-slate-400">Completed assessments are automatically synchronized when this view loads. Identity conflicts are held for review; existing pipeline stages are preserved.</p>}
   <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-bold">Customer Service & Returns Screening</h2><p className="text-sm text-slate-400">{records.filter(r=>r.screening_answers&&r.first_name!=="TestDes"&&(filterEmail===null||Boolean(filterEmail.trim())&&r.email?.trim().toLowerCase()===filterEmail.trim().toLowerCase())).length} candidate assessment(s) · Live recruiting records</p></div><button type="button" className="text-sm underline text-amber-300" onClick={()=>supabase.auth.signOut()}>Sign out of recruiting view</button></div>
   {filterEmail!==null&&<p className="text-sm text-amber-200">Exact-email candidate lookup ({filterEmail}). Records remain in separate databases. Verify the person before relying on this association.</p>}
   <p className="text-sm text-slate-400">Objective screening subtotal: up to 80 points. Written customer response: 20 points, requires recruiter evaluation. No automated hiring decision or final score is assigned.</p>
