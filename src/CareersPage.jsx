@@ -64,7 +64,7 @@ const initialForm = {
   screeningAnswers: {}
 };
 
-export default function CareersPage() {
+export default function CareersPage({ returnsOnly = false }) {
   const [jobs, setJobs] = useState([]);
   const [jobsStatus, setJobsStatus] = useState("loading");
   const [form, setForm] = useState(initialForm);
@@ -93,7 +93,7 @@ export default function CareersPage() {
       setJobs(loadedJobs);
       setJobsStatus("ready");
 
-      const requestedJobId = new URLSearchParams(window.location.search).get("job");
+      const requestedJobId = returnsOnly ? loadedJobs.find(job => job.title === RETURNS_TITLE)?.id : new URLSearchParams(window.location.search).get("job");
       const requestedJob = loadedJobs.find((job) => job.id === requestedJobId);
       if (requestedJob) {
         setForm((prev) => ({
@@ -109,7 +109,7 @@ export default function CareersPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [returnsOnly]);
 
   const completion = useMemo(() => {
     const required = ["firstName", "lastName", "email", "phone", "positionTitle"];
@@ -166,6 +166,11 @@ export default function CareersPage() {
     setSubmitStatus("loading");
     setSubmitMessage("");
 
+    if (returnsOnly && !form.resumeFile) {
+      setSubmitStatus("error");
+      setSubmitMessage("Please upload your resume to complete your Indeed application.");
+      return;
+    }
     if (form.resumeFile) {
       const extension = form.resumeFile.name.split(".").pop()?.toLowerCase();
       const allowedExtensions = ["pdf", "doc", "docx"];
@@ -181,7 +186,7 @@ export default function CareersPage() {
 
     const resumePath = await uploadResume(applicationId);
     const trackingParams = new URLSearchParams(window.location.search);
-    const applicationSource = trackingParams.get("utm_source") || "direct_or_unknown";
+    const applicationSource = returnsOnly ? "indeed_followup" : trackingParams.get("utm_source") || "direct_or_unknown";
     const utmMedium = trackingParams.get("utm_medium");
     const utmCampaign = trackingParams.get("utm_campaign");
     const utmContent = trackingParams.get("utm_content");
@@ -267,20 +272,20 @@ export default function CareersPage() {
         <section className="pt-8 pb-10 sm:pt-12 sm:pb-14">
           <p className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-amber-300 sm:text-sm">Careers at Orion</p>
           <h1 className="max-w-3xl text-3xl font-black leading-[1.05] tracking-tight sm:text-6xl">
-            Build the future of firearms wholesale.
+            {returnsOnly ? "Complete your Customer Service & Returns assessment." : "Build the future of firearms wholesale."}
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-7 text-white/85 sm:text-xl sm:leading-8">
-            Orion is a small, growing team building the tools, products, and service that dealers rely on. If you take pride in your craft, we&apos;d love to talk.
+            {returnsOnly ? "Thanks for applying through Indeed. Please confirm your contact information, upload your resume, and answer seven short questions. You do not need to return to Indeed to finish this step." : "Orion is a small, growing team building the tools, products, and service that dealers rely on. If you take pride in your craft, we&apos;d love to talk."}
           </p>
-          <a
+          {!returnsOnly && <a
             href="#open-roles"
             className="mt-7 inline-flex items-center gap-2 rounded-md bg-gradient-to-r from-amber-300 to-amber-500 px-6 py-3 font-black uppercase tracking-wide text-black shadow-lg shadow-amber-500/20 transition hover:from-amber-200 hover:to-amber-400"
           >
             See open roles <ArrowRight className="h-5 w-5" />
-          </a>
+          </a>}
         </section>
 
-        <section className="border-t border-white/15 py-12">
+        {!returnsOnly && <section className="border-t border-white/15 py-12">
           <h2 className="text-3xl font-black">What it&apos;s like to work here</h2>
           <div className="mt-4 h-0.5 w-16 bg-amber-400" />
           <div className="mt-8 grid gap-6 md:grid-cols-3">
@@ -294,7 +299,7 @@ export default function CareersPage() {
           </div>
         </section>
 
-        <section id="open-roles" className="py-12">
+        <section id="open-roles" className={returnsOnly ? "sr-only" : "py-12"}>
           <h2 className="text-3xl font-black">Open roles</h2>
           <div className="mt-4 h-0.5 w-16 bg-amber-400" />
 
@@ -346,7 +351,7 @@ export default function CareersPage() {
               <form onSubmit={handleSubmit}>
                 <div className="mb-6 flex items-start justify-between gap-4">
                   <div>
-                    <h2 className="text-2xl font-black sm:text-3xl">Apply to Orion</h2>
+                    <h2 className="text-2xl font-black sm:text-3xl">{returnsOnly ? "Complete your Indeed application" : "Apply to Orion"}</h2>
                     {!form.positionId && (
                       <p className="mt-3 text-sm text-white/78 sm:text-base">
                         Don&apos;t see your role? Submit a general application and we&apos;ll keep it on file.
@@ -365,14 +370,14 @@ export default function CareersPage() {
                       <p className="text-[11px] font-bold uppercase tracking-wide text-amber-300">Applying for</p>
                       <p className="mt-0.5 text-base font-black text-white sm:text-lg">{form.positionTitle}</p>
                     </div>
-                    <button
+                    {!returnsOnly && <button
                       type="button"
                       onClick={clearJobSelection}
                       className="inline-flex items-center gap-1 rounded-md border border-white/20 px-2.5 py-1.5 text-xs font-bold text-white/80 transition hover:border-amber-400 hover:text-amber-300"
                       aria-label="Change role"
                     >
                       <X className="h-3.5 w-3.5" /> Change role
-                    </button>
+                    </button>}
                   </div>
                 )}
 
@@ -409,7 +414,7 @@ export default function CareersPage() {
                   <div className="flex items-start gap-3">
                     <Upload className="mt-1 h-6 w-6 shrink-0 text-amber-300" />
                     <div>
-                      <h3 className="font-black text-amber-300">Upload Resume</h3>
+                      <h3 className="font-black text-amber-300">Upload Resume {returnsOnly ? "(required)" : ""}</h3>
                       <p className="mt-1 text-sm leading-6 text-white/60">
                         PDF, DOC, or DOCX. Up to 10MB.
                       </p>
@@ -419,6 +424,7 @@ export default function CareersPage() {
                     <span className="sr-only">Resume</span>
                     <input
                       type="file"
+                      required={returnsOnly}
                       name="resumeFile"
                       onChange={updateField}
                       accept=".pdf,.doc,.docx"
@@ -474,7 +480,7 @@ export default function CareersPage() {
                     </>
                   ) : (
                     <>
-                      {form.positionId ? `Apply for ${form.positionTitle}` : "Submit Application"} <ArrowRight className="h-5 w-5" />
+                      {returnsOnly ? "Submit assessment and contact details" : form.positionId ? `Apply for ${form.positionTitle}` : "Submit Application"} <ArrowRight className="h-5 w-5" />
                     </>
                   )}
                 </button>
