@@ -57,7 +57,7 @@ export default function ATSReturnsScreening({filterEmail=null,expectedName=null,
     const candidateId=matches[0].id;
     const {data:files,error:fileError}=await supabase.rpc("ats_admin_resumes",{p_candidate_id:candidateId});
     if(fileError)throw Error("Could not retrieve candidate attachments");
-    const pdfs=(files||[]).filter(f=>/\\.pdf$/i.test(f.original_name||f.storage_path||""));
+    const pdfs=(files||[]).filter(f=>/\.pdf$/i.test(f.original_name||f.storage_path||""));
     if(!pdfs.length)throw Error("No attached PDF resume");
     const {data,error:analysisError}=await supabase.functions.invoke("analyze-candidate-resume",{body:{candidateId,resumeId:pdfs[0].id}});
     if(analysisError||data?.error||!data?.draft)throw Error(data?.error||analysisError?.message||"AI analysis unavailable");
