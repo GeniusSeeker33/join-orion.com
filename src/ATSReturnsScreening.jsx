@@ -3,6 +3,7 @@ import {supabase} from "./lib/supabaseClient";
 
 const ADMIN_EMAIL="desiree@orionwholesaleonline.com";
 const TITLE="Customer Service & Returns Specialist — Compliance Support";
+const INTERVIEW_STAGES=[["assessment_completed","Assessment completed"],["interview_invited","Interview invited"],["scheduling","Scheduling Teams interview"],["scheduled","Teams interview scheduled"],["completed","Interview completed"],["not_moving_forward","Not moving forward"]];
 const labels={returns:"Returns experience",labels:"Shipping label experience",deescalation:"Customer de-escalation",ownership:"Proactive follow-through",accuracy:"Documentation accuracy",written:"Written customer response",schedule:"Schedule and compensation"};
 
 
@@ -22,6 +23,7 @@ export default function ATSReturnsScreening(){
  const [session,setSession]=useState(null),[checking,setChecking]=useState(true);
  const [records,setRecords]=useState([]),[loading,setLoading]=useState(false),[error,setError]=useState("");
  const [showTest,setShowTest]=useState(false),[sortByScore,setSortByScore]=useState(true);
+ const [saving,setSaving]=useState({}),[drafts,setDrafts]=useState({});
  const [otp,setOtp]=useState(""),[requested,setRequested]=useState(false),[busy,setBusy]=useState(false);
  useEffect(()=>{
   if(!supabase){setChecking(false);setError("Live recruiting connection is not configured.");return;}
@@ -33,11 +35,12 @@ export default function ATSReturnsScreening(){
  const authorized=session?.user?.email?.toLowerCase()===ADMIN_EMAIL;
  useEffect(()=>{if(!authorized)return;let active=true;setLoading(true);setError("");
   supabase.from("candidate_applications")
-   .select("id,first_name,last_name,email,phone,resume_path,position_title,created_at,screening_answers")
+   .select("id,first_name,last_name,email,phone,resume_path,position_title,created_at,screening_answers,interview_status,interview_at,interview_teams_url,interview_notes")
    .eq("position_title",TITLE).order("created_at",{ascending:false})
    .then(({data,error:err})=>{if(active){setRecords(data||[]);setError(err?.message||"");setLoading(false);}});
   return()=>{active=false;};
  },[authorized]);
+ async function saveInterview(r){const d=drafts[r.id]||{};const update={interview_status:d.interview_status??r.interview_status??"assessment_completed",interview_at:d.interview_at===undefined?r.interview_at:(d.interview_at?new Date(d.interview_at).toISOString():null),interview_teams_url:d.interview_teams_url??r.interview_teams_url??null,interview_notes:d.interview_notes??r.interview_notes??null};setSaving(v=>({...v,[r.id]:"Saving…"}));const {data,error:err}=await supabase.from("candidate_applications").update(update).eq("id",r.id).select("id,interview_status,interview_at,interview_teams_url,interview_notes").single();if(err){setSaving(v=>({...v,[r.id]:err.message}));return;}setRecords(v=>v.map(item=>item.id===r.id?{...item,...data}:item));setDrafts(v=>{const next={...v};delete next[r.id];return next});setSaving(v=>({...v,[r.id]:"Saved"}));}
  async function requestCode(e){e.preventDefault();setBusy(true);setError("");
   const {error:err}=await supabase.auth.signInWithOtp({email:ADMIN_EMAIL,options:{shouldCreateUser:false}});
   setBusy(false);if(err)setError(err.message);else setRequested(true);
@@ -73,6 +76,7 @@ export default function ATSReturnsScreening(){
   {records.filter(r=>showTest||r.first_name!=="TestDes").sort((a,b)=>sortByScore?(objectiveScore(b.screening_answers).total-objectiveScore(a.screening_answers).total):new Date(b.created_at)-new Date(a.created_at)).map(r=><article key={r.id} className="rounded-xl border border-slate-700 bg-slate-900 p-4">
    <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">{r.first_name} {r.last_name}</h3>{r.screening_answers&&<span className="rounded-lg bg-slate-800 border border-slate-600 px-3 py-1 text-sm font-semibold">Objective: {objectiveScore(r.screening_answers).total}/80 · Written: pending review</span>}</div>
    <p className="text-sm text-slate-300">{r.email} · {r.phone||"No phone"} · {new Date(r.created_at).toLocaleDateString()}</p>
+   <div className="mt-4 rounded-lg border border-slate-600 p-3 space-y-3"><h4 className="font-semibold text-amber-300">Teams interview tracking · linked to this application</h4><div className="grid gap-3 md:grid-cols-2"><label className="text-sm">Interview status<select className="mt-1 block w-full rounded bg-slate-800 p-2" value={drafts[r.id]?.interview_status??r.interview_status??"assessment_completed"} onChange={e=>setDrafts(v=>({...v,[r.id]:{...v[r.id],interview_status:e.target.value}}))}>{INTERVIEW_STAGES.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><label className="text-sm">Interview date and time<input type="datetime-local" className="mt-1 block w-full rounded bg-slate-800 p-2" value={drafts[r.id]?.interview_at??(r.interview_at?new Date(new Date(r.interview_at).getTime()-new Date(r.interview_at).getTimezoneOffset()*60000).toISOString().slice(0,16):"")} onChange={e=>setDrafts(v=>({...v,[r.id]:{...v[r.id],interview_at:e.target.value}}))}/></label></div><label className="block text-sm">Teams meeting link<input type="url" placeholder="https://teams.microsoft.com/..." className="mt-1 block w-full rounded bg-slate-800 p-2" value={drafts[r.id]?.interview_teams_url??r.interview_teams_url??""} onChange={e=>setDrafts(v=>({...v,[r.id]:{...v[r.id],interview_teams_url:e.target.value}}))}/></label><label className="block text-sm">Recruiter notes<textarea rows={2} className="mt-1 block w-full rounded bg-slate-800 p-2" value={drafts[r.id]?.interview_notes??r.interview_notes??""} onChange={e=>setDrafts(v=>({...v,[r.id]:{...v[r.id],interview_notes:e.target.value}}))}/></label><div className="flex items-center gap-3"><button type="button" className="rounded bg-amber-300 px-3 py-2 font-bold text-slate-950" onClick={()=>saveInterview(r)}>Save interview details</button><span role="status" className="text-sm text-slate-300">{saving[r.id]||""}</span></div></div>
    {r.resume_path&&<button type="button" className="mt-2 text-sm font-bold text-amber-300 underline" onClick={()=>openResume(r.resume_path)}>Open resume (secure link)</button>}
    {r.screening_answers&&<div className="mt-3 text-xs text-slate-400">Rubric breakdown: {objectiveScore(r.screening_answers).details.map(d=>`${labels[d.key]} ${d.points===null?"unmapped":d.points}`).join(" · ")}. Self-reported answers require verification.</div>}
    {r.screening_answers&&Object.keys(r.screening_answers).length>0?<dl className="mt-4 grid gap-3">{Object.entries(labels).map(([key,label])=><div key={key}><dt className="text-xs font-semibold uppercase tracking-wide text-amber-300">{label}</dt><dd className="mt-1 whitespace-pre-wrap text-sm text-slate-100">{r.screening_answers[key]||"Not answered"}</dd></div>)}</dl>:<p className="mt-3 text-sm text-slate-400">No screening answers submitted.</p>}
