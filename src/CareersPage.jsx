@@ -185,6 +185,11 @@ export default function CareersPage({ returnsOnly = false }) {
     const applicationId = crypto.randomUUID();
 
     const resumePath = await uploadResume(applicationId);
+    if (form.resumeFile && !resumePath) {
+      setSubmitStatus("error");
+      setSubmitMessage("Your resume could not be uploaded. Please try again before submitting.");
+      return;
+    }
     const trackingParams = new URLSearchParams(window.location.search);
     const applicationSource = returnsOnly ? "indeed_followup" : trackingParams.get("utm_source") || "direct_or_unknown";
     const utmMedium = trackingParams.get("utm_medium");
@@ -210,6 +215,9 @@ export default function CareersPage({ returnsOnly = false }) {
     };
 
     const { error } = await supabase.from("candidate_applications").insert([payload]);
+    if (error && resumePath) {
+      await supabase.storage.from("resumes").remove([resumePath]);
+    }
 
     if (error) {
       console.error("Candidate insert error:", error);
