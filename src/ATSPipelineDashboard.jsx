@@ -3,9 +3,9 @@ import {marketingDevClient as supabase} from "./lib/marketingDevClient";
 import ReferralReport from "./ReferralReport.jsx";
 const stages=["new","screening","interview","offer","hired","rejected","withdrawn"];
 const label=s=>s.replaceAll("_"," ").replace(/\b\w/g,c=>c.toUpperCase());
-export default function ATSPipelineDashboard({candidates,interviews,feedback,onSelectCandidate}){
+export default function ATSPipelineDashboard({candidates,interviews,feedback,onSelectCandidate,onRefreshDirectory}){
  const [search,setSearch]=useState(""),[data,setData]=useState({requisitions:[],assignments:[]}),[error,setError]=useState(""),[busy,setBusy]=useState(false);
- async function load(){const {data:next,error:err}=await supabase.rpc("ats_admin_requisitions");if(err)setError(err.message);else{setData(next||{requisitions:[],assignments:[]});setError("");}}
+ async function load(){if(onRefreshDirectory)await onRefreshDirectory();const {data:next,error:err}=await supabase.rpc("ats_admin_requisitions");if(err)setError(err.message);else{setData(next||{requisitions:[],assignments:[]});setError("");}}
  useEffect(()=>{load();},[]);
  const reqs=(data.requisitions||[]).filter(r=>r.status==="open"),links=(data.assignments||[]).filter(a=>reqs.some(r=>r.id===a.requisition_id));
  const activeLinks=links.filter(a=>!["rejected","withdrawn"].includes(a.stage)&&a.counts_toward_openings!==false);
