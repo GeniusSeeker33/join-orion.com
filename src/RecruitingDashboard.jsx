@@ -27,6 +27,7 @@ const CANDIDATE_FIELDS = [
   "cover_letter",
   "resume_path",
   "admin_notes",
+  "screening_answers",
   "recruiter",
 ].join(",");
 
@@ -661,6 +662,12 @@ export default function RecruitingDashboard() {
                   </div>
                 </div>
 
+                {selectedCandidate.screening_answers && Object.keys(selectedCandidate.screening_answers).length > 0 && (
+                  <section className="mt-6 rounded-lg border border-amber-400/30 p-4">
+                    <h3 className="font-semibold text-amber-300">Returns screening answers</h3>
+                    <dl className="mt-3 space-y-3">{Object.entries({returns:"Returns experience",labels:"Shipping labels",deescalation:"Customer de-escalation",ownership:"Follow-through",accuracy:"Documentation accuracy",written:"Written response",schedule:"Schedule and compensation"}).map(([key,label]) => <div key={key}><dt className="text-xs font-bold uppercase text-amber-300">{label}</dt><dd className="mt-1 whitespace-pre-wrap text-sm">{selectedCandidate.screening_answers[key] || "Not answered"}</dd></div>)}</dl>
+                  </section>
+                )}
                 <div className="mt-6">
                   <h3 className="font-semibold text-amber-300">
                     Cover Letter
