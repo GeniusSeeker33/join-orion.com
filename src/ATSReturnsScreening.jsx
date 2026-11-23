@@ -25,6 +25,8 @@ export default function ATSReturnsScreening({filterEmail=null,expectedName=null,
  const [records,setRecords]=useState([]),[loading,setLoading]=useState(false),[error,setError]=useState("");
  const [showTest,setShowTest]=useState(false),[sortByScore,setSortByScore]=useState(true);
  const [saving,setSaving]=useState({}),[drafts,setDrafts]=useState({});
+ const [batch,setBatch]=useState({running:false,done:0,total:0,results:{},errors:{}});
+ const [reviewChoices,setReviewChoices]=useState({});
  useEffect(()=>{
   if(!supabase){setChecking(false);setError("Live recruiting connection is not configured.");return;}
   let active=true;
@@ -44,6 +46,27 @@ export default function ATSReturnsScreening({filterEmail=null,expectedName=null,
   syncedSignature.current=signature;
   onBulkSync(records);
  },[authorized,loading,records,onBulkSync,bulkSyncRunning]);
+ async function analyzeAllResumes(){
+  if(batch.running||!window.confirm("Analyze the attached PDF resumes for the Customer Service applicants? AI drafts are for your review only and will not change pipeline stages or hiring decisions."))return;
+  const applicants=records.filter(r=>r.screening_answers&&!/^test/i.test(r.first_name||"")&&r.email);
+  const results={},errors={};setBatch({running:true,done:0,total:applicants.length,results:{},errors:{}});
+  for(let i=0;i<applicants.length;i++){
+   const r=applicants[i];try{
+    const matches=directoryCandidates.filter(c=>c.email?.trim().toLowerCase()===r.email.trim().toLowerCase()&&c.full_name?.trim().toLowerCase()===[r.first_name,r.last_name].join(" ").trim().toLowerCase());
+    if(matches.length!==1)throw Error("Candidate identity needs review");
+    const candidateId=matches[0].id;
+    const {data:files,error:fileError}=await supabase.rpc("ats_admin_resumes",{p_candidate_id:candidateId});
+    if(fileError)throw Error("Could not retrieve candidate attachments");
+    const pdfs=(files||[]).filter(f=>/\\.pdf$/i.test(f.original_name||f.storage_path||""));
+    if(!pdfs.length)throw Error("No attached PDF resume");
+    const {data,error:analysisError}=await supabase.functions.invoke("analyze-candidate-resume",{body:{candidateId,resumeId:pdfs[0].id}});
+    if(analysisError||data?.error||!data?.draft)throw Error(data?.error||analysisError?.message||"AI analysis unavailable");
+    results[r.id]={...data.draft,candidateId,resumeName:data.resume_name};
+   }catch(e){errors[r.id]=e.message||"Review needed";}
+   setBatch({running:true,done:i+1,total:applicants.length,results:{...results},errors:{...errors}});
+  }
+  setBatch({running:false,done:applicants.length,total:applicants.length,results:{...results},errors:{...errors}});
+ }
  async function saveInterview(r){const d=drafts[r.id]||{};const update={interview_status:d.interview_status??r.interview_status??"assessment_completed",interview_at:d.interview_at===undefined?r.interview_at:(d.interview_at?new Date(d.interview_at).toISOString():null),interview_teams_url:d.interview_teams_url??r.interview_teams_url??null,interview_notes:d.interview_notes??r.interview_notes??null};setSaving(v=>({...v,[r.id]:"Saving…"}));const {data,error:err}=await supabase.functions.invoke("ats-returns-access",{body:{action:"update",id:r.id,update}});if(err||data?.error||!data?.record){setSaving(v=>({...v,[r.id]:data?.error||err?.message||"Unable to save"}));return;}setRecords(v=>v.map(item=>item.id===r.id?{...item,...data.record}:item));setDrafts(v=>{const next={...v};delete next[r.id];return next});let message="Saved";if(update.interview_status==="scheduled"&&onScheduled){message=await onScheduled(r);}setSaving(v=>({...v,[r.id]:message}));}
  async function openResume(path){setError("");const {data,error:err}=await supabase.functions.invoke("ats-returns-access",{body:{action:"resume",path}});if(err||data?.error||!data?.url){setError(data?.error||err?.message||"Unable to open resume");return;}window.open(data.url,"_blank","noopener,noreferrer");}
  if(checking)return <p className="text-slate-400">Checking recruiting access…</p>;
@@ -55,6 +78,7 @@ export default function ATSReturnsScreening({filterEmail=null,expectedName=null,
   {filterEmail!==null&&<p className="text-sm text-amber-200">Exact-email candidate lookup ({filterEmail}). Records remain in separate databases. Verify the person before relying on this association.</p>}
   <p className="text-sm text-slate-400">Objective screening subtotal: up to 80 points. Written customer response: 20 points, requires recruiter evaluation. No automated hiring decision or final score is assigned.</p>
   <div className="flex flex-wrap gap-4 text-sm"><label><input type="checkbox" checked={sortByScore} onChange={e=>setSortByScore(e.target.checked)} className="mr-2"/>Sort by objective subtotal</label><label><input type="checkbox" checked={showTest} onChange={e=>setShowTest(e.target.checked)} className="mr-2"/>Include test submissions</label></div>
+  {filterEmail===null&&<div className="rounded-xl border border-amber-500/40 p-4 space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold">Batch resume evidence review</h3><p className="text-sm text-slate-400">Analyze attached PDFs, inspect supporting evidence and gaps, and decide whom to contact yourself. AI does not make or rank hiring decisions.</p></div><button type="button" onClick={analyzeAllResumes} disabled={batch.running} className="rounded-lg bg-amber-300 px-4 py-2 text-slate-950 font-semibold disabled:opacity-50">{batch.running?"Analyzing resumes…":"Review all resumes"}</button></div>{batch.total>0&&<p role="status" className="text-sm">Processed {batch.done} of {batch.total} · {Object.keys(batch.results).length} drafts · {Object.keys(batch.errors).length} need attention</p>}{batch.done>0&&<div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th className="p-2">Applicant</th><th className="p-2">Questionnaire</th><th className="p-2">Resume evidence</th><th className="p-2">Recruiter follow-up</th></tr></thead><tbody>{records.filter(r=>batch.results[r.id]||batch.errors[r.id]).map(r=>{const d=batch.results[r.id];const s=d?.scores||{};const sum=Object.values(s).reduce((a,b)=>a+Number(b||0),0);return <tr key={r.id} className="border-t border-slate-700"><td className="p-2">{r.first_name} {r.last_name}</td><td className="p-2">{objectiveScore(r.screening_answers).total}/80</td><td className="p-2">{d?<details><summary className="cursor-pointer underline text-amber-300">Review evidence ({sum}/100)</summary><p className="whitespace-pre-wrap mt-2">Experience: {d.evidence}</p><p className="whitespace-pre-wrap mt-2">Unverified: {d.gaps}</p><p className="whitespace-pre-wrap mt-2">Interview questions: {d.questions}</p></details>:<span className="text-amber-200">{batch.errors[r.id]}</span>}</td><td className="p-2"><select className="rounded bg-slate-800 p-2" value={reviewChoices[r.id]||"review"} onChange={e=>setReviewChoices(v=>({...v,[r.id]:e.target.value}))}><option value="review">Review further</option><option value="call">Call</option><option value="hold">Hold</option></select></td></tr>})}</tbody></table></div>}{batch.done>0&&<p className="text-xs text-slate-400">Drafts and follow-up selections are temporary in this first version; they are not saved to candidate profiles. Save individual evaluations in Candidate Directory after review.</p>}</div>}
   {error&&<p role="alert" className="text-rose-300">{error}</p>}
   {records.filter(r=>filterEmail===null||Boolean(filterEmail.trim())&&r.email?.trim().toLowerCase()===filterEmail.trim().toLowerCase()).length===0&&<p>{filterEmail?"No exact-email assessment match. Do not assume these records belong to the same person; review identity before linking.":"No applications for this role yet."}</p>}
   {records.filter(r=>(showTest||r.first_name!=="TestDes")&&(filterEmail===null||(Boolean(filterEmail.trim())&&r.email?.trim().toLowerCase()===filterEmail.trim().toLowerCase()))).sort((a,b)=>sortByScore?(objectiveScore(b.screening_answers).total-objectiveScore(a.screening_answers).total):new Date(b.created_at)-new Date(a.created_at)).map(r=><article key={r.id} className="rounded-xl border border-slate-700 bg-slate-900 p-4">
