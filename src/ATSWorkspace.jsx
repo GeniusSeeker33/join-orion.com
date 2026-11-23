@@ -38,9 +38,6 @@ export default function ATSWorkspace() {
  return()=>{live=false};},[authorized]);
  useEffect(()=>{if(!authorized||tab!=="dashboard")return;let live=true;supabase.rpc("ats_admin_directory").then(({data:next,error:err})=>{if(live){if(err)setError(err.message);else{setData(next);setError("");}}});return()=>{live=false};},[authorized,tab]);
  const candidates=data?.candidates||[],interviews=data?.interviews||[],offers=data?.offers||[],employees=data?.employees||[],notes=data?.notes||[],feedback=data?.feedback||[];
- const [returnsAssignments,setReturnsAssignments]=useState(null);
- useEffect(()=>{if(!authorized||!selected){setReturnsAssignments(null);return;}let active=true;setReturnsAssignments(null);supabase.rpc("ats_admin_requisitions").then(({data,error})=>{if(active){setReturnsAssignments(error?null:(data?.assignments||[]));if(error)setError(error.message);}});return()=>{active=false};},[authorized,selected]);
- const hasReturnsAssignment=!!personForReturns(returnsAssignments,selected);
  const [importingReturns,setImportingReturns]=useState({});
  async function importReturnsCandidate(r){
   const fullName=[r.first_name,r.last_name].filter(Boolean).join(" ").trim();
@@ -105,6 +102,9 @@ export default function ATSWorkspace() {
  }
  const filtered=useMemo(()=>candidates.filter(c=>[c.full_name,c.email,c.phone].some(v=>String(v||"").toLowerCase().includes(query.toLowerCase()))),[candidates,query]);
  const person=candidates.find(c=>c.id===selected),personInterviews=interviews.filter(i=>i.candidate_id===selected),personOffers=offers.filter(o=>o.candidate_id===selected),personEmployment=employees.filter(e=>e.candidate_id===selected),personFeedback=feedback.filter(f=>personInterviews.some(i=>i.id===f.interview_id));
+ const [returnsAssignments,setReturnsAssignments]=useState(null);
+ useEffect(()=>{if(!authorized||!selected){setReturnsAssignments(null);return;}let active=true;setReturnsAssignments(null);supabase.rpc("ats_admin_requisitions").then(({data,error})=>{if(active){setReturnsAssignments(error?null:(data?.assignments||[]));if(error)setError(error.message);}});return()=>{active=false};},[authorized,selected]);
+ const hasReturnsAssignment=!!personForReturns(returnsAssignments,selected);
  async function refresh(){const {data:next,error:err}=await supabase.rpc("ats_admin_directory");if(err)setError(err.message);else{setData(next);setError("");}}
  async function setFutureConsideration(decision){if(!selected)return;setError("");const {error:err}=await supabase.rpc("ats_admin_set_future_consideration",{p_candidate_id:selected,p_decision:decision});if(err)setError(err.message);else await refresh();}
  async function saveNote(e){e.preventDefault();if(!selected||!note.trim())return;setBusy(true);const {error:err}=await supabase.rpc("ats_admin_add_note",{p_candidate_id:selected,p_body:note});if(err)setError(err.message);else{setNote("");await refresh();}setBusy(false);}
