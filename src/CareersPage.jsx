@@ -40,6 +40,18 @@ const cultureValues = [
   }
 ];
 
+const RETURNS_TITLE = "Customer Service & Returns Specialist — Compliance Support";
+const returnsQuestions = [
+  {id:"returns",label:"Which best describes your hands-on product returns experience?",options:["I manage returns end-to-end, from authorization through resolution.","I process return authorizations and labels; other teams complete inspection or refunds.","I handle customer return inquiries and coordinate with a returns team.","My experience is primarily general customer service."]},
+  {id:"labels",label:"How have you created return shipping labels?",options:["Directly in UPS, FedEx, or USPS shipping portals.","Through an integrated order-management or shipping platform.","Occasionally, with assistance or an established template.","I have not created return labels myself."]},
+  {id:"deescalation",label:"A customer calls for the third time about a delayed refund. What would you do?",options:["Review the history, acknowledge the frustration, establish the next action, and follow up personally.","Review the status and explain the standard processing timeframe.","Contact the refund team and ask them to follow up with the customer.","Investigate the status and give an estimated resolution timeframe."]},
+  {id:"ownership",label:"Tracking shows a return delivered, but the warehouse has not processed it. What is your approach?",options:["Investigate with the warehouse, update the customer, and track the issue to resolution.","Check the tracking and internal records, then request a warehouse investigation.","Tell the customer the package arrived and processing may take longer.","Escalate the tracking information to a supervisor for direction."]},
+  {id:"accuracy",label:"A returned item's serial number differs from the order record. What would you do?",options:["Verify source records and the physical item, document the discrepancy, and follow the resolution process.","Ask the warehouse to recheck the item and update the record when confirmed.","Place the return on hold and escalate to the appropriate manager.","Contact the customer for clarification and document the response."]},
+  {id:"written",label:"Write a brief response to this customer: 'I've waited two weeks for my refund and nobody can tell me what's happening.'",type:"text"},
+  {id:"schedule",label:"This job pays $21/hour and is full-time in-office in Jeffersonville. Which statement fits?",options:["The compensation and schedule work for me.","The schedule works; I would like to discuss compensation.","The compensation works; I would like to discuss the schedule.","I would like to discuss both."]}
+];
+const isReturnsRole = (title) => title === RETURNS_TITLE;
+
 const initialForm = {
   firstName: "",
   lastName: "",
@@ -48,7 +60,8 @@ const initialForm = {
   positionId: "",
   positionTitle: "",
   coverLetter: "",
-  resumeFile: null
+  resumeFile: null,
+  screeningAnswers: {}
 };
 
 export default function CareersPage() {
@@ -116,7 +129,8 @@ export default function CareersPage() {
     setForm((prev) => ({
       ...prev,
       positionId: job.id,
-      positionTitle: job.title
+      positionTitle: job.title,
+      screeningAnswers: {}
     }));
     track("candidate_position_select", { position: job.title });
     const formEl = document.getElementById("candidate-form");
@@ -186,7 +200,8 @@ export default function CareersPage() {
       position_id: form.positionId || null,
       position_title: form.positionTitle.trim(),
       cover_letter: form.coverLetter.trim() || null,
-      status: "new"
+      status: "new",
+      screening_answers: isReturnsRole(form.positionTitle) ? form.screeningAnswers : null
     };
 
     const { error } = await supabase.from("candidate_applications").insert([payload]);
@@ -411,6 +426,36 @@ export default function CareersPage() {
                     />
                   </label>
                 </div>
+
+                {isReturnsRole(form.positionTitle) && (
+                  <section aria-label="Role-specific screening" className="mt-6 rounded-lg border border-amber-400/30 bg-white/[0.04] p-4">
+                    <h3 className="text-lg font-black text-amber-300">Quick role screening</h3>
+                    <p className="mt-1 text-sm text-white/70">7 questions · approximately 5–8 minutes. No NFA experience required. Answers are reviewed by our hiring team.</p>
+                    <div className="mt-5 space-y-5">
+                      {returnsQuestions.map((q, index) => (
+                        <fieldset key={q.id}>
+                          <legend className="mb-2 text-sm font-semibold">{index + 1}. {q.label}</legend>
+                          {q.type === "text" ? (
+                            <textarea required maxLength={1500} rows={3} value={form.screeningAnswers[q.id] || ""}
+                              onChange={e => setForm(prev => ({...prev,screeningAnswers:{...prev.screeningAnswers,[q.id]:e.target.value}}))}
+                              className="w-full rounded border border-white/20 bg-slate-900 px-3 py-2 text-white"
+                              placeholder="Write your reply to the customer..." />
+                          ) : (
+                            <div className="space-y-2">{q.options.map((option, i) => (
+                              <label key={i} className="flex cursor-pointer items-start gap-2 text-sm text-white/85">
+                                <input type="radio" required name={`screen-${q.id}`} value={option}
+                                  checked={form.screeningAnswers[q.id] === option}
+                                  onChange={() => setForm(prev => ({...prev,screeningAnswers:{...prev.screeningAnswers,[q.id]:option}}))}
+                                  className="mt-1 accent-amber-400" />
+                                <span>{option}</span>
+                              </label>
+                            ))}</div>
+                          )}
+                        </fieldset>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
                 {submitMessage && submitStatus === "error" && (
                   <div className="mt-5 rounded-md border border-red-400/50 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200">
