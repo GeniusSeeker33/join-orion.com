@@ -1,5 +1,7 @@
 import { postings as fixturePostings, requisitions as fixtureRequisitions } from "../../scripts/screening-lab/dataset.mjs";
 
+import { defaultRubric, validCategories } from "../../src/components/screening/rubrics.js";
+
 const storageKey = "orion-screening-demonstration-v1";
 const postings = fixturePostings.slice(1).map(posting => ({
   ...posting, description: "Synthetic posting for recruiter demonstration.", is_active: true
@@ -9,6 +11,10 @@ const requisitions = fixtureRequisitions.slice(1).map(item => ({
 }));
 const recruiter = { user: { email: "recruiter@example.test" } };
 const candidateName = item => item.first_name + " " + item.last_name;
+const applicationDate = index => new Date(Date.UTC(2027, 0, 3 + index, 15)).toISOString();
+const assessmentResponse = id => id.endsWith("-A")
+  ? "I documented the checklist, flagged discrepancies and verified the handoff before release."
+  : "I assisted a lead on the task and asked them to verify the result before release.";
 
 function seed() {
   const positions = {};
@@ -34,7 +40,9 @@ function seed() {
           id, first_name: "Synthetic", last_name: title + " " + suffix,
           position_id: posting.id, position_title: title, screening_version_id: questionnaire.id,
           email: "applicant-" + (applications.length + 1) + "@example.test", phone: "202-555-0100",
-          screening_answers: Object.fromEntries(posting.questions.map(({ id }) => [id, "Sample response for " + id + "."]))
+          created_at: applicationDate(applications.length),
+          screening_answers: Object.fromEntries(posting.questions.map(({ id }) => [id,
+            assessmentResponse(destination + "-" + suffix)]))
         };
         applications.push(application);
         if (suffix === "Routing") continue;
@@ -68,7 +76,19 @@ function newCase(application, candidate, destination, questionnaire) {
 
 function read() {
   const saved = localStorage.getItem(storageKey);
-  return saved ? JSON.parse(saved) : seed();
+  if (!saved) return seed();
+  const state = JSON.parse(saved);
+  state.applications.forEach((application, index) => {
+    application.created_at ??= applicationDate(index);
+    const snapshot = state.cases[application.id]?.application;
+    if (snapshot) snapshot.created_at ??= application.created_at;
+    for (const [id, value] of Object.entries(application.screening_answers ?? {})) {
+      if (value !== "Sample response for " + id + ".") continue;
+      application.screening_answers[id] = assessmentResponse(application.id);
+      if (snapshot?.screening_answers) snapshot.screening_answers[id] = application.screening_answers[id];
+    }
+  });
+  return state;
 }
 
 function save(state) {
@@ -103,12 +123,19 @@ function updateQuestionnaire(state, position, body) {
   return { position };
 }
 
+function rubricHistory(state, requisitionId) {
+  const initial = defaultRubric(requisitions.find(item => item.id === requisitionId)?.title);
+  return initial ? [...(state.rubrics?.[requisitionId] ?? []), initial] : [];
+}
+
 function listApplicants(state, position, requisitionId) {
+  const rubric = rubricHistory(state, requisitionId)[0];
   const rows = state.applications.filter(application => application.position_id === position.job_id &&
     (state.routes[application.id] ?? position.requisition_id) === requisitionId);
   return {
+    rubric,
     applicants: rows.map(application => ({
-      application, case: state.cases[application.id] ?? null, hasResume: true,
+      application, weightedDraft: state.drafts[application.id]?.rubric?.version === rubric?.version ? state.drafts[application.id] : null, case: state.cases[application.id] ?? null, hasResume: true,
       needsRoute: position.requires_routing && !state.routes[application.id],
       questionnaire: state.versions[application.screening_version_id]
     })),
@@ -120,16 +147,51 @@ function listApplicants(state, position, requisitionId) {
 }
 
 const resumeExcerpts = {
-  "Warehouse Middle (Hybrid Maintenance)": "Cleaned and inspected a carton sealer before the morning shift.",
-  "Production Assistant": "Checked assembled parts against the work order before passing them to inspection.",
-  "Cerakote Applicator": "Recorded coating batch numbers and inspected finished samples for uneven coverage.",
-  "Sales Executive": "Confirmed order requirements with customers and documented follow-up in the sales queue."
+  equipment: "Operated a carton tape machine and replaced worn rollers during weekly maintenance.",
+  maintenance: "Inspected feed guides at shift start and logged recurring jams for maintenance.",
+  accuracy: "Checked inventory counts and reported discrepancies before release.",
+  picking: "Picked orders from numbered bins and verified each SKU against the pick ticket.",
+  systems: "Recorded inventory discrepancies in the scanner and updated the shift log.",
+  safety: "Followed the work-area safety checklist and reported a damaged guard to the lead.",
+  packing: "Selected carton sizes and inserted protective padding for fragile shipments.",
+  shipping: "Matched carrier labels with order records and verified destinations before handoff.",
+  work_orders: "Assembled components from current work orders and confirmed quantities at handoff.",
+  quality: "Recorded failed inspections and held affected items pending a second check.",
+  records: "Logged quantities and work-order changes in the production handoff sheet.",
+  preparation: "Degreased parts and masked contact surfaces before coating.",
+  application: "Applied coatings to test panels and recorded cure times for each batch.",
+  discovery: "Asked customers about use cases and confirmed order requirements before quoting.",
+  sales: "Tracked quotes through follow-up and documented product questions for the sales lead.",
+  communication: "Explained product specifications and confirmed delivery expectations with buyers."
 };
+
+function resumeEvidence(application) {
+  const experienced = application.id.endsWith("-A");
+  const initial = defaultRubric(application.position_title);
+  return Object.fromEntries(initial.categories.map((category, index) => {
+    let quote = category.id === "systems" && application.position_title === "Sales Executive"
+      ? "Maintained contact notes and scheduled follow-ups in the CRM." : resumeExcerpts[category.id];
+    if (!experienced) quote = category.id === "accuracy" || index === 0
+      ? "Assisted a team lead with " + category.label.toLowerCase() + " during supervised training." : null;
+    return [category.id, quote ?? null];
+  }));
+}
 
 export async function screeningRequest(action, body = {}) {
   const state = read();
   const position = scopedPosition(state, body.requisitionId);
   if (action === "postings") return { postings };
+  if (action === "rubric" || action === "publishRubric") {
+    const history = rubricHistory(state, body.requisitionId);
+    if (action === "rubric") return { history };
+    if (history[0]?.version !== body.version || !validCategories(body.categories)) {
+      throw new Error("Check the active rubric version and 100-point total.");
+    }
+    state.rubrics ??= {};
+    state.rubrics[body.requisitionId] = [{ version: body.version + 1, categories: body.categories }, ...history.slice(0, -1)];
+    save(state);
+    return { history: rubricHistory(state, body.requisitionId) };
+  }
   if (action === "configuration") return { position: position ?? null };
   if (action === "questionnaire") return updateQuestionnaire(state, position, body);
   if (action === "candidateScreening") return { records: Object.values(state.cases).filter(row => row.candidate_id === body.candidateId) };
@@ -161,30 +223,48 @@ export async function screeningRequest(action, body = {}) {
     return { case: item };
   }
   if (!record) throw new Error("Sync this application first.");
-  const evidenceQuote = resumeExcerpts[application.position_title] ??
-    "Checked inventory counts and reported discrepancies before release.";
+  const rubric = rubricHistory(state, body.requisitionId)[0];
+  const source = resumeEvidence(application);
+  const categories = rubric.categories.map(category => {
+    const quote = Object.hasOwn(source, category.id) ? source[category.id] : null;
+    return { id: category.id, quote, score: quote ? Math.floor(category.weight * (application.id.endsWith("-A") ? 0.85 : 0.45)) : null };
+  });
   if (action === "resume") {
     const sample = ["DEMONSTRATION — SYNTHETIC DATA ONLY", candidateName(application),
-      "Role: " + application.position_title, "", "Sample resume excerpt", evidenceQuote].join("\n");
+      "Role: " + application.position_title, "", ...Object.values(source).filter(Boolean)].join("\n");
     const url = URL.createObjectURL(new Blob([sample], { type: "text/plain" }));
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
     return { url };
   }
   if (action === "draft") {
+    if (body.rubricVersion && body.rubricVersion !== rubric.version) {
+      throw new Error("A new rubric was published. Refresh applications before generating a draft.");
+    }
     if (body.generate) {
-      state.drafts[application.id] = {
-        experience: [{ observation: "Preset excerpt from the synthetic resume.", quote: evidenceQuote }],
-        missing_information: ["The sample does not give an example of correcting a mistake."],
-        interview_questions: ["How did you handle a discrepancy during that work?"]
+      state.drafts[application.id] = { rubric, categories,
+        missing_information: categories.filter(item => item.score === null).map(item =>
+          rubric.categories.find(category => category.id === item.id).label + " remains unverified."),
+        interview_questions: ["Describe a time you caught and corrected a discrepancy during this work."]
       };
       save(state);
     }
-    return { draft: state.drafts[application.id] ?? null };
+    const draft = state.drafts[application.id];
+    return { draft: draft?.rubric?.version === rubric.version ? draft : null };
   }
   if (action === "review") {
     if (record.revision !== body.revision) throw new Error("Review changed. Refresh before saving again.");
     if (body.review.meeting_url) throw new Error("Leave the meeting URL blank in the demonstration. The interview calendar is local.");
-    record.review = body.review;
+    const submitted = body.review.evaluation;
+    let verified = record.review.evaluation;
+    if (submitted) {
+      const scored = rubricHistory(state, body.requisitionId).find(item => item.version === submitted.version);
+      if (!scored || Object.entries(submitted.scores).some(([id, points]) => {
+        const criterion = scored.categories.find(item => item.id === id);
+        return !criterion || (points !== null && (!Number.isInteger(points) || points < 0 || points > criterion.weight));
+      })) throw new Error("Check the rubric version and category point limits.");
+      verified = { rubric: scored, scores: submitted.scores };
+    }
+    record.review = { ...body.review, ...(verified && { evaluation: verified }) };
     record.revision++;
     const assignment = state.assignments.find(item => item.candidate_id === record.candidate_id && item.requisition_id === body.requisitionId);
     if (body.advancePipeline && body.review.interview_at && ["new", "screening"].includes(assignment?.stage)) {

@@ -7,7 +7,14 @@ import { isSplitPosting, isWarehouseSplitPair } from "../src/components/screenin
 import { isOperationalScreening, screeningIsolationError, screeningLabIdentityError } from "./_lib/screening-environment.js";
 import { evidenceFingerprint, extractResumeText, generateEvidence, hash } from "./_lib/screening-evidence.js";
 
+import { defaultRubric, validCategories } from "../src/components/screening/rubrics.js";
+
 const id = z.uuid();
+const rubricCategories = z.array(z.object({ id: z.string(), label: z.string().trim(), weight: z.number() })).refine(validCategories);
+const evaluation = z.object({
+  version: z.number().int().positive(),
+  scores: z.record(z.string().max(40), z.number().int().min(0).max(100).nullable())
+});
 const applicationRequest = { applicationId: id, requisitionId: id };
 const questions = z.array(z.object({
   id: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
@@ -19,18 +26,21 @@ const review = z.object({
   interview_at: z.iso.datetime().nullable(),
   meeting_url: z.url({ protocol: /^https$/ }).max(1000).nullable(),
   approved_evidence: z.string().trim().max(10000),
-  completed: z.boolean()
+  completed: z.boolean(),
+  evaluation: evaluation.optional()
 });
 const request = z.discriminatedUnion("action", [
   z.object({ action: z.literal("postings") }),
+  z.object({ action: z.literal("rubric"), requisitionId: id }),
+  z.object({ action: z.literal("publishRubric"), requisitionId: id, version: z.number().int().positive(), categories: rubricCategories }),
   z.object({ action: z.literal("configuration"), requisitionId: id }),
   z.object({ action: z.literal("questionnaire"), requisitionId: id, jobId: id, alternateRequisitionId: id.optional(), questions, publish: z.boolean() }),
-  z.object({ action: z.literal("applicants"), requisitionId: id, offset: z.number().int().nonnegative().max(100000).default(0) }),
+  z.object({ action: z.literal("applicants"), requisitionId: id, offset: z.number().int().nonnegative().max(100000).default(0), weighted: z.boolean().default(false) }),
   z.object({ action: z.literal("candidateScreening"), candidateId: id }),
   z.object({ action: z.literal("sync"), ...applicationRequest, candidateId: id.optional() }),
   z.object({ action: z.literal("route"), ...applicationRequest, destinationId: id }),
   z.object({ action: z.literal("resume"), ...applicationRequest }),
-  z.object({ action: z.literal("draft"), ...applicationRequest, generate: z.boolean().default(false) }),
+  z.object({ action: z.literal("draft"), ...applicationRequest, generate: z.boolean().default(false), regenerate: z.boolean().default(false), rubricVersion: z.number().int().positive().optional(), weighted: z.boolean().default(false) }),
   z.object({ action: z.literal("review"), ...applicationRequest, revision: z.number().int().nonnegative(), review, advancePipeline: z.boolean().default(false) })
 ]);
 
@@ -137,23 +147,25 @@ async function copyResume(careers, ats, source, record, actor) {
   }));
 }
 
-async function evidence(ats, record, actor, generate) {
-  if (!record.resume_sha256 || !record.questionnaire?.questions?.length) {
+async function evidence(ats, record, actor, generate, rubric, regenerate) {
+  if (!record.resume_sha256 || (!rubric && !record.questionnaire?.questions?.length)) {
     if (!generate) return { draft: null };
     throw new ScreeningError(422, "A private resume and position questionnaire are required.");
   }
-  const fingerprint = evidenceFingerprint(record.resume_sha256, record.questionnaire);
+  const fingerprint = evidenceFingerprint(record.resume_sha256, record.questionnaire, rubric);
   const key = () => ats.from("ats_screening_evidence").select("draft")
     .eq("application_id", record.application_id).eq("fingerprint", fingerprint);
   if (!generate) return { draft: (await query(key().maybeSingle()))?.draft ?? null };
   if (!process.env.OPENAI_API_KEY) {
     const cached = await query(key().maybeSingle());
-    if (cached?.draft) return { draft: cached.draft };
+    if (cached?.draft && !regenerate) return { draft: cached.draft };
     throw new ScreeningError(503, "Resume evidence generation is not configured.");
   }
-  const claim = await query(ats.rpc("ats_screening_claim_evidence", {
-    p_application: record.application_id, p_fingerprint: fingerprint
-  }));
+  const leaseArgs = { p_application: record.application_id, p_fingerprint: fingerprint };
+  const refreshing = Boolean(regenerate && rubric && (await query(key().maybeSingle()))?.draft);
+  const claim = refreshing
+    ? { lease: await query(ats.rpc("ats_screening_refresh_evidence", leaseArgs)) }
+    : await query(ats.rpc("ats_screening_claim_evidence", leaseArgs));
   if (claim.draft) return { draft: claim.draft };
   if (!claim.lease) throw new ScreeningError(409, "A recruiter is already generating this draft. Reload in a moment.");
   const scope = operation => operation.eq("application_id", record.application_id)
@@ -164,14 +176,15 @@ async function evidence(ats, record, actor, generate) {
       throw new ScreeningError(422, "Automatic extraction requires a readable PDF or DOCX. Review this file manually.");
     });
     if (!text.trim()) throw new ScreeningError(422, "This resume has no extractable text. Review it manually.");
-    const draft = await generateEvidence(text, record.questionnaire);
-    await query(scope(ats.from("ats_screening_evidence").update({ draft })).select("fingerprint").single());
+    const draft = await generateEvidence(text, record.questionnaire, rubric);
+    await query(scope(ats.from("ats_screening_evidence").update({ draft, ...(rubric && { leased_at: "-infinity" }) })).select("fingerprint").single());
     await query(ats.from("ats_screening_audit").insert({
       application_id: record.application_id, actor, action: "evidence_generated", details: { fingerprint }
     }));
     return { draft };
   } catch (error) {
-    await scope(ats.from("ats_screening_evidence").delete()).is("draft", null);
+    if (refreshing) await scope(ats.from("ats_screening_evidence").update({ leased_at: "-infinity" }));
+    else await scope(ats.from("ats_screening_evidence").delete()).is("draft", null);
     throw error;
   }
 }
@@ -247,7 +260,36 @@ async function scheduledSync(req, res) {
   return res.status(200).json({ processed: results.length, totals });
 }
 
+async function rubricHistory(ats, recruiter, requisitionId) {
+  const directory = await query(recruiter.rpc("ats_admin_requisitions"));
+  const position = directory?.requisitions?.find(item => item.id === requisitionId);
+  const initial = requisitionId !== legacyReturnsRequisition && defaultRubric(position?.title);
+  if (!initial) return [];
+  const rows = await query(ats.from("ats_screening_rubrics").select("version,categories")
+    .eq("requisition_id", requisitionId).order("version", { ascending: false }));
+  return [...rows, initial];
+}
+
+async function currentDrafts(ats, saved, rubric) {
+  const fingerprints = new Map(saved.filter(item => item.resume_sha256).map(item =>
+    [item.application_id, evidenceFingerprint(item.resume_sha256, item.questionnaire, rubric)]));
+  if (!fingerprints.size) return new Map();
+  const entries = await query(ats.from("ats_screening_evidence").select("application_id,fingerprint,draft")
+    .in("application_id", [...fingerprints.keys()]).in("fingerprint", [...new Set(fingerprints.values())]));
+  return new Map(entries.filter(item => item.fingerprint === fingerprints.get(item.application_id))
+    .map(item => [item.application_id, item.draft]));
+}
+
 async function dispatch(body, { careers, ats, recruiter }, actor) {
+  if (body.action === "rubric" || body.action === "publishRubric") {
+    const history = await rubricHistory(ats, recruiter, body.requisitionId);
+    if (body.action === "rubric") return { history };
+    if (!history.length) throw new ScreeningError(409, "This requisition has no universal rubric.");
+    await query(ats.rpc("ats_screening_publish_rubric", {
+      p_actor: actor, p_requisition: body.requisitionId, p_version: body.version, p_categories: body.categories
+    }));
+    return { history: await rubricHistory(ats, recruiter, body.requisitionId) };
+  }
   if (body.action === "postings") {
     return { postings: await query(careers.from("job_postings")
       .select("id,title,description,location,hours,pay,is_active").order("title").limit(1000)) };
@@ -336,14 +378,16 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
       const versions = versionIds.length ? await query(careers.from("screening_versions")
         .select("id,version,questions").eq("job_id", position.job_id).in("id", versionIds)) : [];
       const questionnaires = new Map(versions.map(version => [version.id, version]));
+      const rubric = body.weighted ? (await rubricHistory(ats, recruiter, body.requisitionId))[0] : null;
+      const drafts = rubric ? await currentDrafts(ats, saved, rubric) : new Map();
       return {
-        summary,
+        summary, rubric,
         routing: position.requires_routing ? { primary: position.requisition_id, alternate: position.alternate_requisition_id } : null,
         nextOffset: source.length > pageSize ? body.offset + pageSize : null,
         applicants: page.map(item => {
           const { resume_path, ...application } = applicantSnapshot(item);
           return {
-            application, case: cases.get(item.id) ?? null, hasResume: Boolean(resume_path),
+            application, case: cases.get(item.id) ?? null, hasResume: Boolean(resume_path), weightedDraft: drafts.get(item.id) ?? null,
             sync: syncStates.get(item.id) ?? null,
             automationEnabled: position.automation_enabled,
             needsRoute: position.requires_routing && !item.routed_requisition_id,
@@ -364,12 +408,29 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
     throw new ScreeningError(409, "Use the legacy Returns workflow for this application.");
   }
   if (body.action === "review") {
+    const submitted = body.review.evaluation;
+    let verified = record.review?.evaluation;
+    if (submitted) {
+      const rubric = (await rubricHistory(ats, recruiter, body.requisitionId)).find(item => item.version === submitted.version);
+      if (!rubric || Object.keys(submitted.scores).some(key => {
+        const category = rubric.categories.find(item => item.id === key);
+        return !category || submitted.scores[key] > category.weight;
+      })) throw new ScreeningError(422, "Check the rubric version and category point limits.");
+      verified = { rubric, scores: submitted.scores };
+    }
     return { case: await query(ats.rpc("ats_screening_save_interview_review", {
       p_actor: actor, p_application: record.application_id, p_revision: body.revision,
-      p_review: body.review, p_advance: body.advancePipeline
+      p_review: { ...body.review, evaluation: verified }, p_advance: body.advancePipeline
     })) };
   }
-  if (body.action === "draft") return evidence(ats, record, actor, body.generate);
+  if (body.action === "draft") {
+    const rubric = body.weighted ? (await rubricHistory(ats, recruiter, body.requisitionId))[0] : null;
+    if (body.weighted && !rubric) throw new ScreeningError(422, "This requisition has no universal rubric.");
+    if (body.rubricVersion && rubric?.version !== body.rubricVersion) {
+      throw new ScreeningError(409, "A new rubric was published. Refresh applications before generating a draft.");
+    }
+    return evidence(ats, record, actor, body.generate, rubric, body.regenerate);
+  }
   if (!record.resume_path) throw new ScreeningError(404, "No synchronized resume.");
   const { signedUrl } = await query(ats.storage.from(bucket).createSignedUrl(record.resume_path, 60, {
     download: record.resume_name
@@ -400,7 +461,8 @@ export default async function handler(req, res) {
   if (result.data.action === "questionnaire" && result.data.publish && isOperationalScreening(process.env)) {
     return res.status(403).json({ error: "Operational questionnaire publication is on hold." });
   }
-  if (isOperationalScreening(process.env) && ["sync", "route", "review"].includes(result.data.action)) {
+  if (isOperationalScreening(process.env) && (["sync", "route", "review", "publishRubric"].includes(result.data.action) ||
+      (result.data.action === "draft" && result.data.weighted && result.data.generate))) {
     return res.status(403).json({ error: "The operational Screening pilot is on hold." });
   }
   try {

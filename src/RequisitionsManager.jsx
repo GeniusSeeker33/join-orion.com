@@ -1,3 +1,4 @@
+import RubricEditor from "./components/screening/RubricEditor";
 import QuestionnaireEditor from "./components/screening/QuestionnaireEditor";
 import {useEffect,useMemo,useState} from "react";
 import {marketingDevClient as supabase} from "./lib/marketingDevClient";
@@ -33,6 +34,7 @@ export default function RequisitionsManager({candidates,onSelectCandidate}){
  <label className="sm:col-span-2">Hiring manager<input className={input} maxLength={150} value={form.hiring_manager} onChange={e=>set("hiring_manager",e.target.value)}/></label>
  <label className="sm:col-span-2">Internal notes<textarea className={input} maxLength={5000} rows={3} value={form.notes} onChange={e=>set("notes",e.target.value)}/></label>
  <button disabled={busy} className="sm:col-span-2 rounded bg-amber-300 p-2 font-semibold text-slate-950">Save requisition</button></form>
+ {!creating&&chosen&&<RubricEditor key={"rubric-" + chosen.id} requisition={chosen}/>}
  {!creating&&chosen&&<QuestionnaireEditor key={chosen.id} requisitionId={chosen.id} requisitions={requisitions}/>}
  {!creating&&chosen&&<div className="mt-7 border-t border-slate-700 pt-5"><h3 className="text-lg font-semibold">Candidate pipeline ({linked.length})</h3><p className="text-sm text-slate-400 mb-3">Stage changes apply only to this requisition.</p>
  <label>Find a candidate<input className={input} placeholder="Search by name or email" value={candidateQuery} onChange={e=>{setCandidateQuery(e.target.value);setCandidateId("");}}/></label>

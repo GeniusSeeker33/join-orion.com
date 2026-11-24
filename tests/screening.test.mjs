@@ -1,3 +1,4 @@
+import { defaultRubric, scoreSummary, validCategories } from "../src/components/screening/rubrics.js";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
@@ -132,6 +133,21 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
     const atsUpgrade = await migration("docs/ats/ats-screening-phase2.sql");
     await db.exec(atsUpgrade);
     await db.exec(atsUpgrade);
+    await db.exec(await migration("docs/ats/ats-screening-rubrics.sql"));
+    const rubric = defaultRubric("Sales Executive");
+    const publish = (actor, requisition, version, categories) => db.query(
+      "select ats_screening_publish_rubric($1,$2,$3,$4)", [requisition, actor, version, JSON.stringify(categories)]);
+    await db.exec("set role authenticated");
+    await assert.rejects(publish(id(1), id(20), 1, rubric.categories), /permission denied/);
+    await db.exec("reset role; set role service_role");
+    await assert.rejects(publish(id(2), id(20), 1, rubric.categories), error => error.code === "42501");
+    await assert.rejects(publish(id(1), id(21), 1, rubric.categories), error => error.code === "42501");
+    await assert.rejects(publish(id(1), id(20), 1, rubric.categories.slice(1)), error => error.code === "22023");
+    await publish(id(1), id(20), 1, rubric.categories);
+    await assert.rejects(publish(id(1), id(20), 1, rubric.categories), error => error.code === "40001");
+    await publish(id(1), id(20), 2, rubric.categories);
+    assert.deepEqual((await db.query("select version from ats_screening_rubrics order by version")).rows, [{version:2},{version:3}]);
+    await db.exec("reset role");
     const source = (app, extra = {}) => ({ id: app, first_name: "Synthetic", last_name: "Applicant",
       email: "synthetic@example.test", phone: "+1 812-555-0100", position_id: id(10), screening_answers: { experience: "Order management" }, ...extra });
     const sync = async (data, manual = null, actor = id(1)) => (await db.query(
@@ -204,6 +220,11 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
     assert.ok((await lease()).rows[0].item.lease);
     assert.equal((await lease()).rows[0].item.draft, null);
     await db.query("update ats_screening_evidence set draft='{\"experience\":[]}' where application_id=$1", [id(30)]);
+    assert.deepEqual((await lease()).rows[0].item.draft, { experience: [] });
+    await db.query("update ats_screening_evidence set leased_at='-infinity' where application_id=$1", [id(30)]);
+    const refresh = () => db.query("select ats_screening_refresh_evidence($1,$2) as lease", [id(30), "digest"]);
+    assert.ok((await refresh()).rows[0].lease);
+    assert.equal((await refresh()).rows[0].lease, null);
     assert.deepEqual((await lease()).rows[0].item.draft, { experience: [] });
     await db.exec("reset role");
     assert.equal((await db.query("select stage from ats_dev.requisition_candidates where candidate_id=$1", [id(25)])).rows[0].stage, "hired");
@@ -456,6 +477,7 @@ test("evidence calls use job criteria and retain only source-backed experience q
     if (oldBase === undefined) delete process.env.OPENAI_BASE_URL;
     else process.env.OPENAI_BASE_URL = oldBase;
   });
+  const rubric = defaultRubric("Sales Executive");
   let called = 0;
   t.mock.method(globalThis, "fetch", async (input, init) => {
     called++;
@@ -463,7 +485,7 @@ test("evidence calls use job criteria and retain only source-backed experience q
     const request = JSON.parse(init.body);
     assert.equal(request.store, false);
     const user = JSON.parse(request.messages.find(message => message.role === "user").content);
-    assert.deepEqual(user.role_criteria, [first[0].prompt]);
+    assert.deepEqual(user.role_criteria, called === 1 ? [first[0].prompt] : rubric.categories);
     assert.equal(user.resume.includes("contact@example.test"), false);
     assert.equal(user.resume.includes("812-555-0100"), false);
     const content = {
@@ -472,12 +494,23 @@ test("evidence calls use job criteria and retain only source-backed experience q
       missing_information: ["Experience verifying discrepancies"],
       interview_questions: ["How did you verify order accuracy?"]
     };
+    if (called === 2) content.categories = [
+      { id: "discovery", score: 20, quote: "Entered orders" },
+      { id: "sales", score: 29, quote: "Invented quote" },
+      { id: "systems", score: 99, quote: "Entered orders" },
+      { id: "communication", score: 15, quote: "[email removed]" }
+    ];
     return Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(content) } }] });
   });
   const draft = await generateEvidence("Entered orders. contact@example.test 812-555-0100", { questions: revised });
   assert.deepEqual(draft.experience, [{ observation: "Handled orders", quote: "Entered orders" }]);
   assert.equal(draft.interview_questions.length, 1);
-  assert.equal(called, 1);
+  const weighted = await generateEvidence("Entered orders. contact@example.test", null, rubric);
+  assert.equal(validCategories(rubric.categories), true);
+  const points = Object.fromEntries(weighted.categories.map(item => [item.id, item.score]));
+  assert.deepEqual(points, { discovery: 20, sales: null, systems: null, communication: null });
+  assert.deepEqual(scoreSummary(rubric, points), { points: 20, covered: 30, total: null });
+  assert.equal(called, 2);
 });
 
 test("combined postings wait for one immutable route and the worker skips unapproved mappings", async () => {

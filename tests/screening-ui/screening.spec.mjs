@@ -233,6 +233,7 @@ test("combined Warehouse applications appear in one destination only after recru
     let result;
     if (body.action === "postings") result = { postings: [combined] };
     if (body.action === "configuration") result = { position: published ? config : null };
+    if (body.action === "rubric") result = { history: [] };
     if (body.action === "questionnaire") {
       expect(body.alternateRequisitionId).toBe(packer.id);
       published = true;
@@ -282,4 +283,43 @@ test("combined Warehouse applications appear in one destination only after recru
   await page.getByRole("button", { name: "Sync application", exact: true }).click();
   await expect(page.getByRole("button", { name: "Open candidate profile and interview calendar" })).toBeVisible();
   expect(syncCount).toBe(1);
+});
+
+test("weighted batch review retries only failed evaluations and keeps unknown totals unverified", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("synthetic-recruiter", "true"));
+  const requisition = { ...req, title: "Warehouse Picker" };
+  const rubric = { version: 1, categories: [{ id: "picking", label: "Picking accuracy", weight: 60 },
+    { id: "safety", label: "Warehouse safety", weight: 40 }] };
+  const second = { ...application, id: id(31), last_name: "Second" };
+  const attempts = [];
+  await page.route("**/__screening_fixture", async route => {
+    const { name } = route.request().postDataJSON();
+    await route.fulfill({ json: { data: name === "ats_admin_requisitions" ? { requisitions: [requisition] } : { candidates: [] } } });
+  });
+  await page.route("**/api/ats-screening", async route => {
+    const body = route.request().postDataJSON();
+    if (body.action === "applicants") {
+      await route.fulfill({ json: { rubric, nextOffset: null, applicants: [application, second].map(item => ({
+        application: item, case: { application_id: item.id, resume_path: "private/synthetic.pdf" }, hasResume: true
+      })) } });
+      return;
+    }
+    expect(body.action).toBe("draft");
+    expect(body.rubricVersion).toBe(1);
+    attempts.push(body.applicationId);
+    if (body.applicationId === second.id && attempts.length === 2) {
+      await route.fulfill({ status: 503, json: { error: "Synthetic temporary failure" } });
+    } else {
+      await route.fulfill({ json: { draft: { rubric, categories: [{ id: "picking", score: 35, quote: "Checked SKUs" },
+        { id: "safety", score: null, quote: null }] } } });
+    }
+  });
+  await page.goto("/ats");
+  await page.getByRole("button", { name: "Applicant Screening", exact: true }).click();
+  await page.getByRole("combobox", { name: "Position", exact: true }).selectOption(requisition.id);
+  await page.getByRole("button", { name: "Generate visible evidence drafts" }).click();
+  await page.getByRole("button", { name: "Retry failed evaluations" }).click();
+  await expect(page.getByText("Processed 1 of 1")).toBeVisible();
+  expect(attempts).toEqual([application.id, second.id, second.id]);
+  await expect(page.getByRole("cell", { name: "35 / 60 assessed · incomplete" })).toHaveCount(2);
 });

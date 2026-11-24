@@ -13,6 +13,15 @@ test("recruiter exercises the persisted demonstration using the real ATS interfa
   await expect(page.getByText("DEMONSTRATION — SYNTHETIC DATA ONLY", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Open Positions", exact: true }).click();
   await page.getByRole("button", { name: /Warehouse Middle/ }).click();
+  const points = page.getByRole("spinbutton", { name: /^Points 1/ });
+  await points.fill("36");
+  await expect(page.getByRole("button", { name: "Publish rubric version" })).toBeDisabled();
+  await page.getByRole("spinbutton", { name: /^Points 2/ }).fill("24");
+  await page.getByRole("button", { name: "Publish rubric version" }).click();
+  await expect(page.getByText("New rubric version published.")).toBeVisible();
+  await page.getByLabel("Rubric version").selectOption("1");
+  await expect(points).toHaveValue("35");
+  await expect(points).toBeDisabled();
   const question = "Demonstrate a synthetic materials inspection.";
   await page.getByRole("textbox", { name: /^Question 1\b/ }).fill(question);
   await page.getByRole("button", { name: "Save draft" }).click();
@@ -47,11 +56,11 @@ test("recruiter exercises the persisted demonstration using the real ATS interfa
 
   const routed = page.getByRole("button", { name: /Synthetic Warehouse Picker Routing/ });
   await routed.click();
-  await expect(page.getByText("Preset excerpt from the synthetic resume.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Weighted resume evaluation", { exact: true })).toBeVisible();
   const popupPromise = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Download private resume" }).click();
   const popup = await popupPromise;
-  await expect(popup.locator("body")).toContainText("Checked inventory counts");
+  await expect(popup.locator("body")).toContainText("Assisted a team lead");
   await popup.close();
   await page.getByText("ATS interview calendar", { exact: true }).click();
   await page.getByLabel("Date", { exact: true }).fill("2027-01-20");
@@ -60,11 +69,17 @@ test("recruiter exercises the persisted demonstration using the real ATS interfa
   await page.getByRole("button", { name: "Schedule interview", exact: true }).click();
   await expect(page.getByText("History and attendance (1)")).toBeVisible();
   await page.getByLabel("Follow-up decision").selectOption("interview");
+  const weights = page.getByRole("group", { name: /Recruiter points/ }).getByRole("spinbutton");
+  for (const [index, points] of [30, 25, 15, 10].entries()) await weights.nth(index).fill(String(points));
   await page.getByLabel("Verified resume evidence").fill("Verified the synthetic inventory excerpt.");
   await page.getByRole("textbox", { name: /^Recruiter notes/ }).fill("Synthetic interview approved.");
   await page.getByLabel("Mark screening review complete").check();
   await page.getByRole("button", { name: "Save recruiter review" }).click();
   await expect(routed).toContainText("Review complete");
+  await expect(page.getByText("Recruiter-verified evaluation · 80 / 100")).toBeVisible();
+  await page.getByRole("button", { name: "Regenerate evidence draft" }).click();
+  await expect(page.getByText("Evidence draft ready for verification.")).toBeVisible();
+  await expect(page.getByText("Recruiter-verified evaluation · 80 / 100")).toBeVisible();
 
   await page.reload();
   await screening();
@@ -72,9 +87,15 @@ test("recruiter exercises the persisted demonstration using the real ATS interfa
   await routed.click();
   await expect(page.getByRole("textbox", { name: /^Recruiter notes/ })).toHaveValue("Synthetic interview approved.");
   await expect(page.getByLabel("Follow-up decision")).toHaveValue("interview");
-  await expect(page.getByText("Preset excerpt from the synthetic resume.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Weighted resume evaluation", { exact: true })).toBeVisible();
   await page.getByText("ATS interview calendar", { exact: true }).click();
   await expect(page.getByText("History and attendance (1)")).toBeVisible();
+  await expect(page.getByText("Recruiter-verified evaluation · 80 / 100")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "80 / 100 · v1" })).toBeVisible();
+  await page.getByLabel("Sort applicants").selectOption("verified");
+  await expect(page.getByRole("rowheader").first()).toHaveText("Synthetic Warehouse Picker Routing");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   expect(outside).toEqual([]);
 });
 
