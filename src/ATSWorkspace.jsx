@@ -17,7 +17,9 @@ import ATSAuthorizedSeats from "./ATSAuthorizedSeats.jsx";
 import CandidateContactEditor from "./CandidateContactEditor.jsx";
 import { marketingDevClient as supabase } from "./lib/marketingDevClient";
 
-const ADMIN_EMAIL = "desiree@orionwholesaleonline.com";
+const localScreeningLab = import.meta.env.VITE_ATS_SCREENING_LAB === "true"
+  && import.meta.env.VITE_MARKETING_DEV_SUPABASE_URL === "http://127.0.0.1:57321";
+const ADMIN_EMAIL = localScreeningLab ? "recruiter@example.test" : "desiree@orionwholesaleonline.com";
 const panel = "rounded-xl border border-slate-700 bg-slate-900 p-5";
 const field = "w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2";
 export default function ATSWorkspace() {

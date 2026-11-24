@@ -1,6 +1,6 @@
 -- Owner host only. Raw definitions may contain secrets. Write to a private file for review.
 begin read only;
-select p.oid::regprocedure,pg_get_functiondef(p.oid)
+select p.oid::regprocedure,pg_get_functiondef(p.oid),p.proacl,pg_get_userbyid(p.proowner)
 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
 where p.prokind='f' and (
   (n.nspname='public' and p.proname in (
@@ -13,7 +13,7 @@ where p.prokind='f' and (
   or p.oid in (
     select t.tgfoid from pg_trigger t join pg_class c on c.oid=t.tgrelid
     join pg_namespace s on s.oid=c.relnamespace
-    where s.nspname='ats_dev' and c.relname in ('requisition_candidates','interviews','candidate_resumes')
+    where s.nspname='ats_dev' and c.relname in ('requisition_candidates','interviews','candidate_resumes','resume_imports')
       and not t.tgisinternal
   )
 )

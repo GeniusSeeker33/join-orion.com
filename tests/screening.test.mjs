@@ -544,6 +544,51 @@ test("combined postings wait for one immutable route and the worker skips unappr
   }
 });
 
+test("ownership upgrade quarantines existing Returns rows and fences outstanding leases", async () => {
+  const db = await createReferralDb();
+  try {
+    await db.exec(`reset role; create role service_role bypassrls;
+      alter table job_postings add column created_at timestamptz default now(), add column hours text,
+        add column pay text, add column location text, add column description text;
+      alter table candidate_applications add column resume_path text, add column phone text, add column created_at timestamptz default now();
+      update job_postings set title='Customer Service & Returns Specialist — Compliance Support' where id='${id(11)}';`);
+    for (const filename of [
+      "20261124000000_screening_questionnaires.sql", "20261124010000_screening_sync_queue.sql",
+      "20261124020000_screening_routing.sql"
+    ]) await db.exec(await migration("supabase/migrations/" + filename));
+    for (const [job, req] of [[10, 20], [11, 21]]) {
+      await db.query("select write_screening_routing($1,$2,$3,$4,true,null)", [id(job), id(req), JSON.stringify(first), id(1)]);
+    }
+    const submit = (app, job) => db.query(`
+      insert into candidate_applications(id,first_name,last_name,email,position_id,position_title,status)
+      values($1,'Synthetic','Applicant',$2,$3,'Fixture','new')`, [id(app), `app${app}@example.test`, id(job)]);
+    await submit(30, 11);
+    await submit(31, 11);
+    await submit(32, 10);
+    await db.query("update screening_sync_queue set attempts=3,lease_id=$2,available_at=now()-interval '1 hour',error_code='retry' where application_id=$1", [id(30), id(90)]);
+    await db.query("update screening_sync_queue set state='synced' where application_id=$1", [id(31)]);
+    await db.exec("update screening_positions set automation_enabled=true");
+    const originals = (await db.query("select * from screening_sync_queue order by application_id")).rows;
+    await db.exec(await migration("supabase/migrations/20261124030000_screening_sync_ownership.sql"));
+    const snapshot = async () => (await db.query("select * from screening_sync_queue order by application_id")).rows;
+    const upgraded = await snapshot();
+    assert.deepEqual(upgraded.map(({ legacy_quarantined_at, ...row }) => row), originals);
+    assert.ok(upgraded[0].legacy_quarantined_at && upgraded[1].legacy_quarantined_at);
+    assert.equal(upgraded[2].legacy_quarantined_at, null);
+    await db.exec("set role service_role");
+    await db.query("select finish_screening_sync($1,$2,'synced')", [id(30), id(90)]);
+    const leased = (await db.query("select * from claim_screening_sync(8)")).rows;
+    assert.deepEqual(leased.map(row => row.application_id), [id(32)]);
+    await db.exec("reset role");
+    await submit(33, 11);
+    await db.query("update candidate_applications set resume_path='synthetic/changed.pdf' where id=$1", [id(30)]);
+    assert.deepEqual((await snapshot()).slice(0, 2), upgraded.slice(0, 2));
+    assert.equal((await snapshot()).length, 3);
+  } finally {
+    await db.close();
+  }
+});
+
 test("isolated screening configuration rejects live refs, swapped lab ports and nonfixture inference", () => {
   const careersRef = "testcareersstagingaa";
   const atsRef = "testatstagingaaaaaaa";

@@ -177,3 +177,7 @@ The operational UUID inventory is complete as metadata, and linkage/publication 
 ## Phase 7 Returns ownership and operational rehearsal
 
 The verified operational inventory remains six postings and seven requisitions. Returns remains with the existing workflow and five-minute scheduler. The universal eligibility boundary covers the other five postings and six requisitions. The manual-only production pilot, production publication, and universal worker activation remain on hold. See the [private schema handoff, recruiter acceptance steps, and reviewed behavior](phase7-rehearsal.md).
+
+## Phase 8 release and local acceptance
+
+The ownership migration preserves pre-existing Returns queue records and makes quarantined leases unusable. The operational schema replay and all release approvals remain pending. See the [owner export, local recruiter acceptance and rollback guide](phase8-release-and-acceptance.md).

@@ -10,7 +10,8 @@ import handler from "../../api/ats-screening.js";
 import { labAtsUrl, labCareersUrl, labInferenceKey, labInferenceUrl } from "../../api/_lib/screening-environment.js";
 import { postings, requisitions } from "./dataset.mjs";
 
-const [root, run] = process.argv.slice(2);
+const [root, run, mode] = process.argv.slice(2);
+const acceptance = mode === "--acceptance";
 const contract = compareContract(JSON.parse(await readFile(join(root, "ats-contract.json"), "utf8")));
 assert.ok(!contract.blockers.some(issue => /Interview RPC signature|unavailable authenticated RPC: ats_admin_create_interview/.test(issue)),
   "The local interview RPC must expose the reported text-time contract");
@@ -59,6 +60,7 @@ Object.assign(process.env, {
   VITE_MARKETING_DEV_SUPABASE_PUBLISHABLE_KEY: atsInfo.ANON_KEY,
   ATS_SCREENING_SERVICE_ROLE_KEY: atsInfo.SERVICE_ROLE_KEY,
   ATS_SCREENING_LOCAL_MODE: "true",
+  VITE_ATS_SCREENING_LAB: "true",
   ATS_SCREENING_LAB_RUN: run,
   ATS_SCREENING_CRON_ENABLED: "false",
   OPENAI_API_KEY: labInferenceKey,
@@ -245,7 +247,10 @@ const inference = createServer(async (req, res) => {
   for await (const chunk of req) body += chunk;
   const request = JSON.parse(body);
   assert.equal(request.store, false);
-  assert.match(request.messages[1].content, /Synthetic inventory experience/);
+  if (!request.messages[1].content.includes("Synthetic inventory experience")) {
+    res.writeHead(422).end();
+    return;
+  }
   inferenceRequests++;
   const output = { experience: [{ observation: "Inventory experience", quote: "Synthetic inventory experience" }],
     missing_information: [], interview_questions: ["Describe an inventory check."] };
@@ -322,3 +327,22 @@ assert.equal(pipeline.interviews.length, 1);
 assert.equal(pipeline.assignments.find(row => row.candidate_id === selected.candidate_id).stage, "interview");
 assert.equal(pipeline.assignments.find(row => row.candidate_id === selected.candidate_id).requisition_id, combined.alternate);
 console.log("Verified private signed resumes, local model evidence and cache, repeat sync, recruiter re-login, and fixture interview persistence");
+
+if (acceptance) {
+  const { startAcceptancePreview } = await import("./preview.mjs");
+  await new Promise((resolve, reject) => inference.listen(5588, "127.0.0.1", resolve).once("error", reject));
+  try {
+    const server = await startAcceptancePreview(join(root, "frontend"));
+    console.log("Synthetic ATS: http://127.0.0.1:5587/ats");
+    console.log("Synthetic Careers: http://127.0.0.1:5587/careers");
+    console.log("Legacy Returns intake: http://127.0.0.1:5587/returns-assessment");
+    console.log("Disposable recruiter login: " + recruiterUser.email + " / " + password);
+    await new Promise(resolve => {
+      process.once("SIGINT", resolve);
+      process.once("SIGTERM", resolve);
+    });
+    await new Promise(resolve => server.httpServer.close(resolve));
+  } finally {
+    await new Promise(resolve => inference.close(resolve));
+  }
+}

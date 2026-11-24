@@ -4,7 +4,7 @@ with relations as (
   select c.oid,c.relname,c.relrowsecurity,c.relforcerowsecurity
   from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
   where n.nspname='ats_dev' and c.relkind in ('r','p')
-    and c.relname in ('requisitions','candidates','interviews','candidate_resumes','memberships','requisition_candidates')
+    and c.relname in ('requisitions','candidates','interviews','candidate_resumes','memberships','requisition_candidates','resume_imports')
 ), functions as (
   select p.*,n.nspname as schema_name from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
   where p.prokind='f' and (

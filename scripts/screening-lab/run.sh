@@ -2,6 +2,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 umask 077
+if [[ "$#" -gt 1 || ( "$#" -eq 1 && "$1" != "--acceptance" ) ]]; then
+  echo "Usage: $0 [--acceptance]" >&2
+  exit 2
+fi
+if [[ "$#" -eq 1 && -n "${ORION_ATS_REVIEWED_SQL:-}" ]]; then
+  echo "Run acceptance with the synthetic fixture. Run the approved replay separately." >&2
+  exit 2
+fi
 # Always use the local daemon and unaffiliated temporary Supabase projects.
 unset DOCKER_CONTEXT DOCKER_HOST SUPABASE_ACCESS_TOKEN
 docker=(docker --host unix:///var/run/docker.sock)
@@ -67,4 +75,4 @@ if [[ -n "${ORION_ATS_REVIEWED_SQL:-}" ]]; then
   node scripts/screening-lab/contract.mjs "$root/ats-contract.json"
 fi
 # Scrub any inherited cloud URL, API key, or provider settings before running fixtures.
-env -i PATH="$PATH" node scripts/screening-lab/smoke.mjs "$root" "$run"
+env -i PATH="$PATH" node scripts/screening-lab/smoke.mjs "$root" "$run" "$@"

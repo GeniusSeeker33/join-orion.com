@@ -29,7 +29,8 @@ begin
   if not exists (select 1 from ats_dev.memberships where user_id=auth.uid() and role='recruiter_admin' and is_active) then
     raise insufficient_privilege;
   end if;
-  return jsonb_build_object('requisitions', (select jsonb_agg(r) from ats_dev.requisitions r));
+  return jsonb_build_object('requisitions', (select jsonb_agg(r) from ats_dev.requisitions r),
+    'assignments', (select jsonb_agg(a) from ats_dev.requisition_candidates a));
 end
 $$;
 create function public.ats_admin_create_interview(
@@ -74,3 +75,16 @@ create policy fixture_legacy_resume_read on storage.objects for select to authen
 using (bucket_id='ats-dev-resumes' and public.screening_fixture_is_recruiter());
 create policy fixture_legacy_resume_insert on storage.objects for insert to authenticated
 with check (bucket_id='ats-dev-resumes' and public.screening_fixture_is_recruiter());
+
+-- Directory surface used for interactive acceptance on the synthetic schema.
+create function public.ats_admin_directory() returns jsonb
+language plpgsql stable security definer set search_path='' as $$
+begin
+  if not public.screening_fixture_is_recruiter() then raise insufficient_privilege; end if;
+  return jsonb_build_object(
+    'candidates',(select coalesce(jsonb_agg(c),'[]') from ats_dev.candidates c),
+    'interviews',(select coalesce(jsonb_agg(i),'[]') from ats_dev.interviews i));
+end
+$$;
+revoke all on function public.ats_admin_directory() from public,anon,authenticated;
+grant execute on function public.ats_admin_directory() to authenticated;

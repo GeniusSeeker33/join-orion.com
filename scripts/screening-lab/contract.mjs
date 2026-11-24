@@ -66,6 +66,7 @@ export function compareContract(snapshot) {
   if (!snapshot?.tables || !Array.isArray(snapshot.rpcs)) throw new Error("Expected the ATS catalog metadata JSON object.");
   const blockers = [];
   const review = [];
+  if (!snapshot.tables.resume_imports) blockers.push("Missing ats_dev.resume_imports legacy attachment ledger.");
   for (const [name, expected] of Object.entries(columns)) {
     const table = snapshot.tables[name];
     if (!table) {

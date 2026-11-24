@@ -2,7 +2,7 @@
 
 **Recommendation: hold the manual-only production pilot.** The local fixture is aligned to the reported live interview signature and still exercises the Screening overlays using real Auth, PostgREST and Storage. The maintained ATS definitions and write behavior of the deployed Returns RPC remain unverified. The operational UUID inventory was completed in Phase 6. A fixture pass is evidence for the application contract, with a separate release gate for the operational baseline.
 
-See the [Phase 7 ownership and private rehearsal handoff](phase7-rehearsal.md) for the newer operational review and pilot hold.
+See the [Phase 8 release and acceptance gate](phase8-release-and-acceptance.md) for the latest operational preflight, owner schema export and pilot hold.
 
 ## Evidence and gaps
 
