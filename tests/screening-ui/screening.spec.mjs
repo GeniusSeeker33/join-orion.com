@@ -76,7 +76,7 @@ test("recruiter publishes via Open Positions and saves evidence and follow-up ac
       case "questionnaire":
         config = { job_id: body.jobId, draft: body.questions, published_id: body.publish ? questionnaire.id : null };
         result = { position: config }; break;
-      case "applicants": result = { applicants: [{ application, case: record, hasResume: true }], nextOffset: null }; break;
+      case "applicants": result = { applicants: [{ application, case: record, hasResume: true, questionnaire }], nextOffset: null }; break;
       case "sync":
         record = { application_id: application.id, application, candidate_id: candidate.id, resume_path: "private/path",
           questionnaire, interview: null, identity_state: "linked", revision: 0, review: {} };
@@ -110,6 +110,7 @@ test("recruiter publishes via Open Positions and saves evidence and follow-up ac
     await page.getByRole("button", { name: /Synthetic Applicant/ }).click();
   }
   await openApplicant();
+  await expect(page.getByText(questionnaire.questions[0].prompt)).toBeVisible();
   await page.getByRole("button", { name: "Sync application", exact: true }).click();
   await expect(page.getByText("Coordinated receiving and documented the refund.")).toBeVisible();
   await page.getByRole("button", { name: "Generate visible evidence drafts" }).click();
@@ -134,4 +135,26 @@ test("signed-out visitors see the existing ATS sign-in boundary", async ({ page 
   await page.goto("/ats");
   await expect(page.getByRole("heading", { name: "Recruiter administrator sign-in" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Applicant Screening" })).toHaveCount(0);
+});
+
+test("candidate pipeline, employment screens and leadership reporting remain reachable", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("synthetic-recruiter", "true"));
+  await page.route("**/api/ats-screening", route => route.fulfill({ json: { records: [] } }));
+  await page.route("**/__screening_fixture", async route => {
+    const { name } = route.request().postDataJSON();
+    const responses = {
+      ats_admin_directory: { candidates: [candidate] },
+      ats_admin_requisitions: { requisitions: [req], assignments: [{ requisition_id: req.id, candidate_id: candidate.id, stage: "hired" }] },
+      ats_admin_employment: { employment_status: "active", start_date: "2026-11-01" }
+    };
+    await route.fulfill({ json: { data: responses[name] ?? [] } });
+  });
+  await page.goto("/ats");
+  await page.getByRole("button", { name: /Synthetic Applicant/ }).click();
+  await expect(page.getByRole("heading", { name: "Position pipeline" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Employment lifecycle" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Interview management" })).toBeVisible();
+  await page.getByRole("button", { name: "Leadership Dashboard" }).click();
+  await expect(page.getByRole("heading", { name: "Hiring progress by position" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Current recruiting funnel" })).toBeVisible();
 });

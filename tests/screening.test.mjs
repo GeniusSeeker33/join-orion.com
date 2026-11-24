@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
-import { extractResumeText, evidenceFingerprint } from "../api/_lib/screening-evidence.js";
+import { extractResumeText, evidenceFingerprint, generateEvidence } from "../api/_lib/screening-evidence.js";
 import handler from "../api/ats-screening.js";
 import { screeningTemplates } from "../src/components/screening/templates.js";
 import { asUser, createReferralDb, id, seedEmployee } from "./fixtures/referralDb.mjs";
@@ -189,4 +189,115 @@ test("API rejects unauthenticated and malformed requests before accessing privat
   assert.equal(reply.code, 401);
   await handler({ method: "POST", headers: { authorization: "Bearer synthetic" }, body: { action: "resume", path: "other_resume.pdf" } }, reply);
   assert.equal(reply.code, 400);
+});
+
+test("recruiter bridge verifies ATS membership before copying an application resume into private storage", async t => {
+  const settings = {
+    VITE_SUPABASE_URL: "https://careers.example.test",
+    VITE_MARKETING_DEV_SUPABASE_URL: "https://ats.example.test",
+    VITE_MARKETING_DEV_SUPABASE_PUBLISHABLE_KEY: "synthetic-publishable",
+    SUPABASE_SERVICE_ROLE_KEY: "synthetic-careers-server",
+    ATS_SCREENING_SERVICE_ROLE_KEY: "synthetic-ats-server"
+  };
+  const previous = Object.fromEntries(Object.keys(settings).map(key => [key, process.env[key]]));
+  Object.assign(process.env, settings);
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const router = { authorized: false, copiedPath: null, linked: null };
+  const source = { id: id(30), position_id: id(10), first_name: "Synthetic", last_name: "Applicant",
+    email: "synthetic@example.test", resume_path: id(30) + "/test.pdf", screening_version_id: id(40) };
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    const url = new URL(input);
+    const authorization = new Headers(init.headers).get("authorization");
+    calls.push(url.pathname);
+    if (url.pathname === "/rest/v1/rpc/ats_screening_authorize") {
+      assert.equal(authorization, "Bearer synthetic-ats-session");
+      return Response.json(router.authorized ? id(1) : null);
+    }
+    assert.equal(authorization, url.hostname === "careers.example.test" ? "Bearer synthetic-careers-server" : "Bearer synthetic-ats-server");
+    if (url.pathname === "/rest/v1/screening_positions") return Response.json([{ job_id: id(10), published_id: id(40) }]);
+    if (url.pathname === "/rest/v1/candidate_applications") {
+      assert.equal(url.searchParams.get("id"), "eq." + source.id);
+      assert.equal(url.searchParams.get("position_id"), "eq." + source.position_id);
+      return Response.json([source]);
+    }
+    if (url.pathname === "/rest/v1/screening_versions") return Response.json([{ id: id(40), version: 1, questions: first }]);
+    if (url.pathname === "/rest/v1/rpc/ats_screening_import") {
+      assert.equal(JSON.parse(init.body).p_actor, id(1));
+      return Response.json({ application_id: source.id, candidate_id: id(25), resume_path: router.copiedPath });
+    }
+    if (url.pathname === "/storage/v1/object/info/resumes/" + source.resume_path) return Response.json({ size: 10 });
+    if (url.pathname === "/storage/v1/object/authenticated/resumes/" + source.resume_path ||
+        url.pathname === "/storage/v1/object/resumes/" + source.resume_path) {
+      return new Response("%PDF-test", { headers: { "content-type": "application/pdf" } });
+    }
+    if (url.pathname.startsWith("/storage/v1/object/ats-screening-resumes/")) {
+      router.copiedPath = url.pathname.split("/ats-screening-resumes/")[1];
+      assert.match(router.copiedPath, new RegExp(`^${id(25)}/${source.id}-[a-f0-9]{64}[.]pdf$`));
+      assert.equal(new Headers(init.headers).get("x-upsert"), "false");
+      return Response.json({ Key: "ats-screening-resumes/" + router.copiedPath });
+    }
+    if (url.pathname === "/rest/v1/rpc/ats_screening_record_resume") {
+      const data = JSON.parse(init.body);
+      assert.equal(data.p_path, router.copiedPath);
+      router.linked = { candidate_id: data.p_candidate, resume_path: data.p_path };
+      return Response.json(router.linked);
+    }
+    throw new Error(`Unexpected synthetic request ${url.pathname}`);
+  });
+  const response = { setHeader() {}, status(code) { this.code = code; return this; }, json(body) { this.body = body; } };
+  const req = { method: "POST", headers: { authorization: "Bearer synthetic-ats-session" },
+    body: { action: "sync", requisitionId: id(20), applicationId: source.id } };
+  await handler(req, response);
+  assert.equal(response.code, 403);
+  assert.deepEqual(calls, ["/rest/v1/rpc/ats_screening_authorize"]);
+  router.authorized = true;
+  await handler(req, response);
+  assert.equal(response.code, 200);
+  assert.equal(response.body.case.resume_path, router.copiedPath);
+  assert.equal(router.linked.candidate_id, id(25));
+  calls.length = 0;
+  await handler(req, response);
+  assert.equal(response.code, 200);
+  assert.ok(calls.every(path => !path.startsWith("/storage/")));
+});
+
+test("evidence calls use job criteria and retain only source-backed experience quotes", async t => {
+  const oldKey = process.env.OPENAI_API_KEY;
+  const oldBase = process.env.OPENAI_BASE_URL;
+  process.env.OPENAI_API_KEY = "synthetic-inference-key";
+  process.env.OPENAI_BASE_URL = "https://inference.example.test/v1";
+  t.after(() => {
+    if (oldKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = oldKey;
+    if (oldBase === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = oldBase;
+  });
+  let called = 0;
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    called++;
+    assert.equal(new URL(input).hostname, "inference.example.test");
+    const request = JSON.parse(init.body);
+    assert.equal(request.store, false);
+    const user = JSON.parse(request.messages.find(message => message.role === "user").content);
+    assert.deepEqual(user.role_criteria, [first[0].prompt]);
+    assert.equal(user.resume.includes("contact@example.test"), false);
+    assert.equal(user.resume.includes("812-555-0100"), false);
+    const content = {
+      experience: [{ observation: "Handled orders", quote: "Entered orders" },
+        { observation: "Invented experience", quote: "Managed 100 reports" }],
+      missing_information: ["Experience verifying discrepancies"],
+      interview_questions: ["How did you verify order accuracy?"]
+    };
+    return Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(content) } }] });
+  });
+  const draft = await generateEvidence("Entered orders. contact@example.test 812-555-0100", { questions: revised });
+  assert.deepEqual(draft.experience, [{ observation: "Handled orders", quote: "Entered orders" }]);
+  assert.equal(draft.interview_questions.length, 1);
+  assert.equal(called, 1);
 });

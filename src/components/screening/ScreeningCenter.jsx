@@ -69,7 +69,8 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
     }, "Recruiter review saved.");
   }
 
-  const questionLabels = new Map((application.screening_version_id ? record?.questionnaire?.questions
+  const questionnaire = record?.questionnaire ?? row.questionnaire;
+  const questionLabels = new Map((application.screening_version_id ? questionnaire?.questions
     : application.screening_answers ? legacyReturnsQuestions : [])?.map(q => [q.id, q.prompt]));
   const set = (key, value) => setReview(current => ({ ...current, [key]: value }));
   const linkedCandidate = candidates.find(candidate => candidate.id === record?.candidate_id);
@@ -81,7 +82,7 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
   return <article className="space-y-4 rounded-xl border border-slate-700 bg-slate-900 p-5">
     <header><h3 className="text-xl font-semibold">{application.first_name} {application.last_name}</h3>
       <p className="break-words text-sm text-slate-300">{application.email} · {application.phone}</p>
-      <p className="text-sm text-slate-400">{assessmentState(row)}{application.screening_version_id && record?.questionnaire ? ` · Version ${record.questionnaire.version}` : ""}</p>
+      <p className="text-sm text-slate-400">{assessmentState(row)}{application.screening_version_id && questionnaire ? ` · Version ${questionnaire.version}` : ""}</p>
     </header>
     {!record ? <button className={primary} disabled={busy} onClick={() => run("sync", {}, "Application synchronized.")}>Sync application</button> :
       record.candidate_id ? <button className="text-amber-300 underline" onClick={() => onSelectCandidate(record.candidate_id)}>Open candidate profile and interview calendar</button> :
@@ -95,6 +96,10 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
           <button className={button} disabled={busy || !candidateId} onClick={() => run("sync", { candidateId }, "Verified identity linked.")}>Confirm identity link</button>
         </section>}
 
+    {application.cover_letter && <details>
+      <summary className="cursor-pointer font-semibold">Application statement</summary>
+      <p className="mt-2 whitespace-pre-wrap break-words">{application.cover_letter}</p>
+    </details>}
     {application.screening_answers && <details open>
       <summary className="cursor-pointer font-semibold">Assessment answers</summary>
       <dl className="mt-3 grid gap-3">{Object.entries(application.screening_answers).map(([key, value]) => <div key={key}>

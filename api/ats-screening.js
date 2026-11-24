@@ -76,12 +76,12 @@ function clients(token) {
 function applicantSnapshot(source) {
   const {
     id, first_name, last_name, email, phone, position_id, position_title, screening_answers, screening_version_id,
-    created_at, source: channel, employee_referral_code, utm_campaign, utm_medium, utm_content, interview_at,
+    created_at, cover_letter, source: channel, employee_referral_code, utm_campaign, utm_medium, utm_content, interview_at,
     interview_teams_url, interview_notes, resume_path
   } = source;
   return {
     id, first_name, last_name, email, phone, position_id, position_title, screening_answers, screening_version_id,
-    created_at, source: channel, employee_referral_code, utm_campaign, utm_medium, utm_content, interview_at,
+    created_at, cover_letter, source: channel, employee_referral_code, utm_campaign, utm_medium, utm_content, interview_at,
     interview_teams_url, interview_notes, resume_path
   };
 }
@@ -192,11 +192,19 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
       const saved = page.length ? await query(ats.from("ats_screening_cases").select("*")
         .eq("requisition_id", body.requisitionId).in("application_id", page.map(item => item.id))) : [];
       const cases = new Map(saved.map(item => [item.application_id, item]));
+      const versionIds = [...new Set(page.flatMap(item =>
+        item.screening_version_id && !cases.has(item.id) ? [item.screening_version_id] : []))];
+      const versions = versionIds.length ? await query(careers.from("screening_versions")
+        .select("id,version,questions").eq("job_id", position.job_id).in("id", versionIds)) : [];
+      const questionnaires = new Map(versions.map(version => [version.id, version]));
       return {
         nextOffset: source.length > pageSize ? body.offset + pageSize : null,
         applicants: page.map(item => {
           const { resume_path, ...application } = applicantSnapshot(item);
-          return { application, case: cases.get(item.id) ?? null, hasResume: Boolean(resume_path) };
+          return {
+            application, case: cases.get(item.id) ?? null, hasResume: Boolean(resume_path),
+            questionnaire: questionnaires.get(item.screening_version_id) ?? null
+          };
         })
       };
     }

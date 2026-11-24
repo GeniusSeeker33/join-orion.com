@@ -1,3 +1,7 @@
+## Applicant Screening
+
+See the [ATS screening rollout and validation guide](docs/ats/screening-progress.md) for recruiter setup, staging migrations and test commands.
+
 ## Marketing Hub
 
 The integrated hub is available at `/marketing`, linked from both admin dashboards.
