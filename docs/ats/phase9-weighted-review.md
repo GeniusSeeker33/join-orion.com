@@ -1,0 +1,25 @@
+# Weighted resume evaluation and Batch Review
+
+Production remains on hold. The Returns reference branch supplied the weighted category and batch progress patterns. Its evaluation criteria, historical results, interface and synchronization remain separate.
+
+Open Positions provides independent rubrics for the six universal requisitions. The repository ships baseline version 1 for each position. Publishing requires an active recruiter administrator, a current version, distinct criteria and exactly 100 points. Older versions are read-only. Existing verified reviews retain the rubric version and criteria used at review time. Drafts use the active rubric and a cache keyed by the resume digest and rubric.
+
+An AI draft can suggest category points only with a source excerpt. Unsupported categories stay unverified, even when other categories have evidence. Partial subtotals show their assessed denominator and never become a total out of 100. Recruiters enter their own category points, evidence notes, completion and follow-up decisions. Regeneration refreshes only the draft and keeps the previous draft available until a replacement succeeds. A completed review retains its recruiter points separately. Saving a verified review uses the existing optimistic revision and audit trail. No score triggers a stage, communication, eligibility result or hiring decision.
+
+Batch Review shows the visible requisition page with application dates, assessment and resume status, draft and verified scores, decisions and calendar status. Sort by date, name or completed scores and filter review and resume state. Run batch generation, monitor per-candidate results and retry failures from that batch. Unknown or partial totals stay below complete scores when sorting. Verified scores show the rubric version when comparing rows.
+
+For preliminary UI acceptance, run `npm run demo:screening` in the existing Codespace and open the private port 5191. Synthetic examples include documented experience and training-only resumes with unverified categories. The demo adapter keeps rubric history, drafts, scores, routing and decisions in your browser and never calls an AI or operational service.
+
+The new [ATS-only rubric overlay](ats-screening-rubrics.sql) follows the Phase 2 ATS overlay in an isolated replay. No Careers schema change is needed for weighting. Install the new overlay on operational ATS only with separate approval and after the maintained baseline and full integration rehearsal pass. Operational rubric publication and weighted draft generation remain blocked by the API while the pilot is on hold.
+
+## Saving and scheduling
+
+Save recruiter review accepts scores, notes and a follow-up decision without a date. Optional fields are validated when supplied. If a save fails, the applicant panel retains its edits and shows the error beside the save controls. A successful save updates Batch Review immediately. Assessment answers open on request.
+
+Use the ATS interview calendar to schedule an interview. That action leaves the assignment stage alone. To move a New or Screening assignment, enter a follow-up date and time in the review, explicitly check the move option, and save. The checkbox is disabled until the follow-up time is supplied. The review can still be saved without that option.
+
+## Returns access
+
+Applicant Screening routes Customer Service & Returns Specialist — Compliance Support to the original Returns view. The Returns Screening shortcut opens the same center with that position selected. Switching to another position opens the universal queue. The Returns assessment and resume rubrics, interview tracking and historical evaluation use their existing legacy endpoints. Candidate Directory shows the legacy resume evaluation for candidates with a Returns assignment.
+
+Opening Returns does not initiate an import or create an assignment. The existing Returns scheduler retains synchronization ownership. The Docker-free demonstration includes synthetic Returns applications, an interview and a historical evaluation. The operational legacy endpoints still require validation in a separately authorized integration rehearsal.

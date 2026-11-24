@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import { track } from "@vercel/analytics";
 import { supabase } from "./lib/supabaseClient";
 import VisitorCounter from "./VisitorCounter";
@@ -51,7 +51,12 @@ const initialForm = {
   resumeFile: null
 };
 
-export default function CareersPage() {
+export default function CareersPage({ assessment = false }) {
+  const { jobId } = useParams();
+  const returnsAssessment = assessment && !jobId;
+  const [questionnaireState, setQuestionnaireState] = useState(null);
+  const [answerState, setAnswerState] = useState(null);
+  const [reload, setReload] = useState(0);
   const [jobs, setJobs] = useState([]);
   const [jobsStatus, setJobsStatus] = useState("loading");
   const [form, setForm] = useState(initialForm);
@@ -59,7 +64,29 @@ export default function CareersPage() {
   const [submitMessage, setSubmitMessage] = useState("");
   const [referralCode, setReferralCode] = useState(() => new URLSearchParams(window.location.search).get('ref') || '');
 
+  const requestJob = assessment ? jobId ?? null : form.positionId;
+  const questionnaire = questionnaireState?.job === requestJob && questionnaireState?.reload === reload
+    ? questionnaireState : null;
+  const answers = answerState?.version === questionnaire?.data?.id ? answerState?.values ?? {} : {};
+  const position = assessment && questionnaire?.data
+    ? { id: questionnaire.data.job_id, title: questionnaire.data.title }
+    : { id: form.positionId, title: form.positionTitle };
+
   useEffect(() => {
+    if ((!assessment && !requestJob) || !supabase) return;
+    if (requestJob && !/^[0-9a-f-]{36}$/i.test(requestJob) && assessment) return;
+    let live = true;
+    supabase.rpc("read_screening_questionnaire", { p_job: requestJob }).then(({ data, error }) => {
+      if (!live) return;
+      // Older deployments can keep accepting general Careers applications during rollout.
+      const missingMigration = error?.code === "PGRST202";
+      setQuestionnaireState({ job: requestJob, reload, data, error: !assessment && missingMigration ? null : error });
+    });
+    return () => { live = false; };
+  }, [assessment, requestJob, reload]);
+
+  useEffect(() => {
+    if (assessment || !supabase) return;
     let cancelled = false;
     (async () => {
       const { data, error } = await supabase
@@ -97,13 +124,14 @@ export default function CareersPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [assessment]);
 
-  const completion = useMemo(() => {
-    const required = ["firstName", "lastName", "email", "phone", "positionTitle"];
-    const filled = required.filter((key) => form[key]?.trim?.()).length;
-    return Math.round((filled / required.length) * 100);
-  }, [form]);
+  const completion = (() => {
+    const values = [form.firstName, form.lastName, form.email, form.phone, position.title,
+      ...(questionnaire?.data?.questions ?? []).map(question => answers[question.id] ?? "")];
+    if (returnsAssessment) values.push(form.resumeFile?.name ?? "");
+    return Math.round((values.filter(value => value.trim()).length / values.length) * 100);
+  })();
 
   const updateField = (event) => {
     const { name, value, type, files } = event.target;
@@ -114,6 +142,7 @@ export default function CareersPage() {
   };
 
   const selectJob = (job) => {
+    if (job.id !== position.id) setAnswerState(null);
     setForm((prev) => ({
       ...prev,
       positionId: job.id,
@@ -150,9 +179,15 @@ export default function CareersPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if ((assessment || requestJob) && (!questionnaire || questionnaire.error || (assessment && !questionnaire.data))) return;
     setSubmitStatus("loading");
     setSubmitMessage("");
 
+    if (returnsAssessment && !form.resumeFile) {
+      setSubmitStatus("error");
+      setSubmitMessage("Upload your resume to complete the Returns assessment.");
+      return;
+    }
     if (form.resumeFile) {
       const extension = form.resumeFile.name.split(".").pop()?.toLowerCase();
       const allowedExtensions = ["pdf", "doc", "docx"];
@@ -166,7 +201,7 @@ export default function CareersPage() {
 
     const normalizedReferral = referralCode.trim().toUpperCase();
     if (normalizedReferral) {
-      const { data: valid, error } = await supabase.rpc('validate_sales_referral', { p_code: normalizedReferral, p_job: form.positionId || null });
+      const { data: valid, error } = await supabase.rpc('validate_sales_referral', { p_code: normalizedReferral, p_job: position.id || null });
       if (error || !valid) {
         setSubmitStatus('error');
         setSubmitMessage(error ? 'We could not verify your referral code. Please try again.' : 'This referral code is unavailable for the selected position. Check the code or remove it to apply without a referral.');
@@ -176,8 +211,13 @@ export default function CareersPage() {
     const applicationId = crypto.randomUUID();
 
     const resumePath = await uploadResume(applicationId);
+    if (form.resumeFile && !resumePath) {
+      setSubmitStatus("error");
+      setSubmitMessage("Your resume could not be uploaded. Please try again.");
+      return;
+    }
     const trackingParams = new URLSearchParams(window.location.search);
-    const applicationSource = trackingParams.get("utm_source") || "direct_or_unknown";
+    const applicationSource = trackingParams.get("utm_source") || (returnsAssessment ? "indeed_followup" : "direct_or_unknown");
     const utmMedium = trackingParams.get("utm_medium");
     const utmCampaign = trackingParams.get("utm_campaign");
     const utmContent = trackingParams.get("utm_content");
@@ -193,11 +233,15 @@ export default function CareersPage() {
       last_name: form.lastName.trim(),
       email: form.email.trim(),
       phone: form.phone.trim(),
-      position_id: form.positionId || null,
-      position_title: form.positionTitle.trim(),
+      position_id: position.id || null,
+      position_title: position.title.trim(),
       cover_letter: form.coverLetter.trim() || null,
       status: "new"
     };
+    if (questionnaire?.data) {
+      payload.screening_version_id = questionnaire.data.id;
+      payload.screening_answers = answers;
+    }
     if (normalizedReferral) payload.employee_referral_code = normalizedReferral;
 
     const { error } = await supabase.from("candidate_applications").insert([payload]);
@@ -206,6 +250,9 @@ export default function CareersPage() {
       console.error("Candidate insert error:", error);
       track("candidate_form_submit_error", { reason: "insert_failed" });
       setSubmitStatus("error");
+      if (error.code === "22023" && error.message.startsWith("The questionnaire changed")) {
+        setReload(value => value + 1);
+      }
       setSubmitMessage(error.code === '22023' ? error.message : "Something went wrong submitting your application. Please try again or email careers@join-orion.com.");
       return;
     }
@@ -216,7 +263,7 @@ export default function CareersPage() {
         lastName: form.lastName.trim(),
         email: form.email.trim(),
         phone: form.phone.trim(),
-        positionTitle: form.positionTitle.trim(),
+        positionTitle: position.title.trim(),
         coverLetter: form.coverLetter.trim() || null,
         resumePath
       }
@@ -226,6 +273,7 @@ export default function CareersPage() {
     track("candidate_form_submit_success", { position: form.positionTitle });
     setSubmitStatus("success");
     setForm(initialForm);
+    setAnswerState(null);
     setReferralCode('');
     const fileInputs = document.querySelectorAll('input[type="file"]');
     fileInputs.forEach((input) => {
@@ -261,6 +309,7 @@ export default function CareersPage() {
           </Link>
         </header>
 
+        {!assessment && <>
         <section className="pt-8 pb-10 sm:pt-12 sm:pb-14">
           <p className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-amber-300 sm:text-sm">Careers at Orion</p>
           <h1 className="max-w-3xl text-3xl font-black leading-[1.05] tracking-tight sm:text-6xl">
@@ -320,6 +369,8 @@ export default function CareersPage() {
           </div>
         </section>
 
+        </>}
+
         <section id="candidate-form" className="pb-16 pt-4">
           <div className="rounded-xl border border-amber-400/60 bg-black/68 p-5 shadow-2xl shadow-black/50 backdrop-blur-xl sm:p-8">
             {submitStatus === "success" ? (
@@ -336,15 +387,26 @@ export default function CareersPage() {
                   onClick={resetForm}
                   className="mt-7 inline-flex items-center gap-2 rounded-md border border-amber-400 px-5 py-3 text-sm font-black uppercase tracking-wide text-amber-300 transition hover:bg-amber-400 hover:text-black"
                 >
-                  Apply to another role
+                  {assessment ? "Start another application" : "Apply to another role"}
                 </button>
               </div>
+            ) : assessment && !questionnaire?.data ? (
+              <p role="status">{questionnaire || !supabase || (jobId && !/^[0-9a-f-]{36}$/i.test(jobId))
+                ? "This assessment is unavailable."
+                : "Loading assessment…" } <Link className="underline" to="/careers">Browse open roles</Link></p>
             ) : (
               <form onSubmit={handleSubmit}>
                 <div className="mb-6 flex items-start justify-between gap-4">
                   <div>
-                    <h2 className="text-2xl font-black sm:text-3xl">Apply to Orion</h2>
-                    {!form.positionId && (
+                    <h2 className="text-2xl font-black sm:text-3xl">{assessment ? position.title : "Apply to Orion"}</h2>
+                    {assessment && <div className="mt-3 text-sm text-white/80">
+                      <p>{[questionnaire.data.location, questionnaire.data.hours, questionnaire.data.pay].filter(Boolean).join(" · ")}</p>
+                      {questionnaire.data.description && <details className="mt-2">
+                        <summary className="cursor-pointer font-semibold text-amber-300">Job description</summary>
+                        <p className="mt-2 whitespace-pre-wrap">{questionnaire.data.description}</p>
+                      </details>}
+                    </div>}
+                    {!position.id && (
                       <p className="mt-3 text-sm text-white/78 sm:text-base">
                         Don&apos;t see your role? Submit a general application and we&apos;ll keep it on file.
                       </p>
@@ -356,11 +418,11 @@ export default function CareersPage() {
                   </div>
                 </div>
 
-                {form.positionId && (
+                {position.id && !assessment && (
                   <div className="mb-2 flex items-start justify-between gap-4 rounded-lg border border-amber-400/60 bg-amber-400/10 px-4 py-3">
                     <div>
                       <p className="text-[11px] font-bold uppercase tracking-wide text-amber-300">Applying for</p>
-                      <p className="mt-0.5 text-base font-black text-white sm:text-lg">{form.positionTitle}</p>
+                      <p className="mt-0.5 text-base font-black text-white sm:text-lg">{position.title}</p>
                     </div>
                     <button
                       type="button"
@@ -379,7 +441,7 @@ export default function CareersPage() {
                 </div>
                 <Input label="Email" name="email" type="email" value={form.email} onChange={updateField} placeholder="you@email.com" required />
                 <Input label="Phone Number" name="phone" type="tel" value={form.phone} onChange={updateField} placeholder="(000) 000-0000" required />
-                {!form.positionId && (
+                {!position.id && (
                   <Input
                     label="Position of Interest"
                     name="positionTitle"
@@ -408,7 +470,7 @@ export default function CareersPage() {
                     <div>
                       <h3 className="font-black text-amber-300">Upload Resume</h3>
                       <p className="mt-1 text-sm leading-6 text-white/60">
-                        PDF, DOC, or DOCX. Up to 10MB.
+                        PDF, DOC, or DOCX. Up to 10MB.{returnsAssessment && " Required for the Returns assessment."}
                       </p>
                     </div>
                   </div>
@@ -419,6 +481,7 @@ export default function CareersPage() {
                       name="resumeFile"
                       onChange={updateField}
                       accept=".pdf,.doc,.docx"
+                      required={returnsAssessment}
                       className="w-full rounded-sm border border-white/14 bg-white/[0.075] px-4 py-3 text-sm text-white file:mr-4 file:rounded file:border-0 file:bg-amber-400 file:px-4 file:py-2 file:font-bold file:text-black"
                     />
                   </label>
@@ -428,6 +491,21 @@ export default function CareersPage() {
                   <input name="employeeReferralCode" maxLength={64} value={referralCode} onChange={e => setReferralCode(e.target.value)} aria-describedby="referral-help" className="mt-2 w-full rounded-lg border border-white/20 bg-black/40 px-4 py-3 text-white" />
                   <span id="referral-help" className="mt-2 block text-xs font-normal text-white/70">For eligible Sales positions only. Enter the code shared by an Orion Sales employee. The first valid code submitted receives credit and cannot be changed afterward.</span>
                 </label>
+                {requestJob && !questionnaire && <p role="status">Loading screening questions…</p>}
+                {questionnaire?.error && <p role="alert">Could not load screening questions. <button type="button" className="underline" onClick={() => setReload(value => value + 1)}>Retry</button></p>}
+                {questionnaire?.data?.questions?.length > 0 && (
+                  <fieldset className="my-6 grid gap-4">
+                    <legend className="text-lg font-bold text-amber-300">Screening questions</legend>
+                    {questionnaire.data.questions.map(({ id, prompt }) => (
+                      <label key={id} className="grid gap-2">
+                        {prompt}
+                        <textarea className="rounded border border-white/20 bg-black/40 p-3" required maxLength={3000} rows={3}
+                          value={answers[id] ?? ""}
+                          onChange={event => setAnswerState({ version: questionnaire.data.id, values: { ...answers, [id]: event.target.value } })} />
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
                 {submitMessage && submitStatus === "error" && (
                   <div className="mt-5 rounded-md border border-red-400/50 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200">
                     {submitMessage}
@@ -436,7 +514,7 @@ export default function CareersPage() {
 
                 <button
                   type="submit"
-                  disabled={submitStatus === "loading"}
+                  disabled={submitStatus === "loading" || Boolean(requestJob && (!questionnaire || questionnaire.error))}
                   className="mt-5 flex w-full items-center justify-center gap-2 rounded-md bg-gradient-to-r from-amber-300 to-amber-500 px-6 py-4 font-black uppercase tracking-wide text-black shadow-lg shadow-amber-500/20 transition hover:from-amber-200 hover:to-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {submitStatus === "loading" ? (
@@ -445,7 +523,7 @@ export default function CareersPage() {
                     </>
                   ) : (
                     <>
-                      {form.positionId ? `Apply for ${form.positionTitle}` : "Submit Application"} <ArrowRight className="h-5 w-5" />
+                      {position.id ? `Apply for ${position.title}` : "Submit Application"} <ArrowRight className="h-5 w-5" />
                     </>
                   )}
                 </button>
@@ -457,7 +535,7 @@ export default function CareersPage() {
         <footer className="border-t border-white/10 py-6 text-center text-xs text-white/50">
           <p>&copy; {new Date().getFullYear()} Orion Wholesale. All rights reserved.</p>
           <div className="mt-2 flex justify-center">
-            <VisitorCounter page="careers" />
+            {supabase && <VisitorCounter page="careers" />}
           </div>
         </footer>
       </div>

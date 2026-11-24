@@ -2,15 +2,15 @@ import { useEffect, useState } from "react";
 import { marketingDevClient as supabase } from "./lib/marketingDevClient";
 const STAGES=["Phone Interview","Video Interview","In Person Interview"];
 const input="w-full rounded border border-slate-600 bg-slate-800 p-2";
-export default function InterviewManager({candidate,interviews,feedback,onRefresh}){
- const [form,setForm]=useState({position:"",date:"",start:"",end:"",format:"In person",stage:"Phone Interview"});
+export default function InterviewManager({candidate,interviews,feedback,onRefresh,initialPosition=""}){
+ const [form,setForm]=useState({position:initialPosition,date:"",start:"",end:"",format:"In person",stage:"Phone Interview"});
  const [managers,setManagers]=useState([]),[labels,setLabels]=useState({}),[draft,setDraft]=useState({}),[open,setOpen]=useState(null),[error,setError]=useState(""),[saving,setSaving]=useState(false);
  useEffect(()=>{supabase.rpc("ats_admin_hiring_managers").then(({data})=>setManagers(data||[]));},[]);
  useEffect(()=>{let live=true;supabase.rpc("ats_admin_manager_feedback_labels",{p_candidate_id:candidate.id}).then(({data})=>{if(live)setLabels(Object.fromEntries((data||[]).map(x=>[x.feedback_id,x.manager_name])));});return()=>{live=false;};},[candidate.id,feedback]);
  const set=(key,value)=>setForm(old=>({...old,[key]:value}));
  async function create(e){e.preventDefault();setSaving(true);setError("");
  const {error:err}=await supabase.rpc("ats_admin_create_interview",{p_candidate_id:candidate.id,p_position_title:form.position,p_interview_date:form.date,p_start_time:form.start||null,p_end_time:form.end||null,p_interview_format:form.format,p_interview_stage:form.stage});
- if(err)setError(err.message);else{setForm({...form,position:"",date:"",start:"",end:""});await onRefresh();}setSaving(false);}
+ if(err)setError(err.message);else{setForm({...form,position:initialPosition,date:"",start:"",end:""});await onRefresh();}setSaving(false);}
  async function attendance(id,status){setSaving(true);const {error:err}=await supabase.rpc("ats_admin_update_attendance",{p_interview_id:id,p_attendance:status});if(err)setError(err.message);else await onRefresh();setSaving(false);}
  async function saveFeedback(e,id){e.preventDefault();setSaving(true);const d=draft[id]||{};const {error:err}=await supabase.rpc("ats_admin_save_manager_feedback",{p_interview_id:id,p_manager_id:d.managerId||null,p_notes:d.notes||null,p_manager_feedback:d.manager||null,p_rating:d.rating?Number(d.rating):null});if(err)setError(err.message);else{setOpen(null);setDraft(old=>({...old,[id]:{}}));await onRefresh();}setSaving(false);}
  const updateDraft=(id,key,value)=>setDraft(old=>({...old,[id]:{...old[id],[key]:value}}));

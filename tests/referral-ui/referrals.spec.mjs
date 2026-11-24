@@ -2,7 +2,10 @@ import { test, expect } from '@playwright/test';
 
 test('employee share → sales landing → application → hire → verified payroll', async ({ page, request }) => {
   const errors = []; page.on('pageerror',error => errors.push(error.message));
-  await page.addInitScript(() => sessionStorage.setItem('referral-test-user','2'));
+  await page.addInitScript(() => {
+    if (window !== window.top || location.origin !== 'http://127.0.0.1:5182') return;
+    if (!sessionStorage.getItem('referral-test-user')) sessionStorage.setItem('referral-test-user','2');
+  });
   await page.goto('/referrals');
   await expect(page.getByRole('heading',{name:/Good people know/})).toBeVisible();
   const code = await page.getByLabel('Your referral code',{exact:true}).inputValue();
@@ -21,8 +24,6 @@ test('employee share → sales landing → application → hire → verified pay
   await expect(page.getByText(/application received|application has been|thank you|application submitted/i).first()).toBeVisible();
   await request.post('/__referral_test',{data:{operation:'historical-hire',args:{email:'browser@example.test'}}});
   await page.evaluate(() => sessionStorage.setItem('referral-test-user','1'));
-  // addInitScript otherwise restores employee identity on each navigation.
-  await page.addInitScript(() => sessionStorage.setItem('referral-test-user','1'));
   await page.goto('/admin/referrals');
   await page.getByRole('button',{name:'Review Browser Candidate',exact:true}).click();
   await page.getByLabel('Consultant hire date').fill('2024-02-29');
@@ -45,7 +46,10 @@ test('employee share → sales landing → application → hire → verified pay
 });
 
 test('mobile employee page has no horizontal overflow and no candidate identities', async ({ page }) => {
-  await page.addInitScript(() => sessionStorage.setItem('referral-test-user','2'));
+  await page.addInitScript(() => {
+    if (window !== window.top || location.origin !== 'http://127.0.0.1:5182') return;
+    if (!sessionStorage.getItem('referral-test-user')) sessionStorage.setItem('referral-test-user','2');
+  });
   await page.setViewportSize({width:390,height:844}); await page.goto('/referrals');
   await expect(page.getByLabel('Your referral code',{exact:true})).toBeVisible();
   await expect(page.getByText('browser@example.test')).toHaveCount(0);

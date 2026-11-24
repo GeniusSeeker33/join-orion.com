@@ -22,7 +22,9 @@ export default defineConfig({
           const { operation, name, args = {}, user } = JSON.parse(raw);
           let data;
           await asUser(db, user || null);
-          if (operation === 'rpc') {
+          if (operation === 'rpc' && name === 'read_screening_questionnaire') {
+            data = null; // This harness has no published Sales questionnaire.
+          } else if (operation === 'rpc') {
             const keys = signatures[name]; if (!keys) throw new Error('Unknown fixture RPC');
             data = (await db.query(`select public.${name}(${keys.map((_,i) => `$${i+1}`).join(',')}) data`, keys.map(k => args[k] ?? null))).rows[0].data;
           } else if (operation === 'jobs') {
