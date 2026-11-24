@@ -1,0 +1,12 @@
+{
+  "status": "unverified",
+  "note": "The IDs supplied in the brief are existing-environment hints. Verify against the two staging projects before use. Null means no authoritative ID was supplied.",
+  "positions": [
+    { "position": "Customer Service & Returns Specialist — Compliance Support", "careersPostingId": null, "atsRequisitionId": "a822e721-4d9e-439d-83c8-a1a0a41efbe6" },
+    { "position": "Warehouse Middle (Hybrid Maintenance)", "careersPostingId": "6702d7a6-3c34-4b13-9fba-d86b67b419ec", "atsRequisitionId": "0b3de8eb-dfff-435b-ab7a-cbf9667a3eee" },
+    { "position": "Warehouse Picker/Packer", "careersPostingId": null, "atsRequisitionId": null },
+    { "position": "Production Assistant", "careersPostingId": null, "atsRequisitionId": null },
+    { "position": "Cerakote Applicator", "careersPostingId": null, "atsRequisitionId": null },
+    { "position": "Sales Executive", "careersPostingId": null, "atsRequisitionId": null }
+  ]
+}
