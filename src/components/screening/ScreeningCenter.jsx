@@ -1,3 +1,5 @@
+import ATSReturnsScreening from "../../ATSReturnsScreening";
+import { isReturnsRequisition, returnsRequisitionId, returnsTitle } from "./returns";
 import InterviewManager from "../../InterviewManager";
 import { useEffect, useState } from "react";
 import { marketingDevClient } from "../../lib/marketingDevClient";
@@ -354,9 +356,9 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
   </>;
 }
 
-export default function ScreeningCenter({ candidates, interviews, feedback, onRefresh, onSelectCandidate }) {
+export default function ScreeningCenter({ candidates, interviews, feedback, onRefresh, onSelectCandidate, startWithReturns = false }) {
   const [positions, setPositions] = useState([]);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(startWithReturns ? returnsRequisitionId : "");
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
@@ -367,13 +369,17 @@ export default function ScreeningCenter({ candidates, interviews, feedback, onRe
     });
     return () => { live = false; };
   }, []);
+  const returns = positions.find(isReturnsRequisition) ?? { id: returnsRequisitionId, title: returnsTitle };
+  const selection = selected === returnsRequisitionId ? returns.id : selected;
+  const options = [returns, ...positions.filter(position => !isReturnsRequisition(position))];
   return <section className="space-y-4">
     <h2 className="text-2xl font-bold">Applicant Screening Center</h2>
     {error && <p role="alert" className="text-rose-300">{error}</p>}
-    <label className="block max-w-lg">Position<select className={field} value={selected} onChange={event => setSelected(event.target.value)}>
+    <label className="block max-w-lg">Position<select className={field} value={selection} onChange={event => setSelected(event.target.value)}>
       <option value="">Select a requisition</option>
-      {positions.map(position => <option key={position.id} value={position.id}>{position.title} · {position.status}</option>)}
+      {options.map(position => <option key={position.id} value={position.id}>{position.title}{position.status && ` · ${position.status}`}</option>)}
     </select></label>
-    {selected && <PositionReview key={selected} requisitionId={selected} positions={positions} candidates={candidates} interviews={interviews} feedback={feedback} onRefresh={onRefresh} onSelectCandidate={onSelectCandidate} />}
+    {selection === returns.id && <ATSReturnsScreening directoryCandidates={candidates} onSelectCandidate={onSelectCandidate} />}
+    {selection && selection !== returns.id && <PositionReview key={selection} requisitionId={selection} positions={positions} candidates={candidates} interviews={interviews} feedback={feedback} onRefresh={onRefresh} onSelectCandidate={onSelectCandidate} />}
   </section>;
 }

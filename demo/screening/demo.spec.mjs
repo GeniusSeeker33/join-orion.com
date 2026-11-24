@@ -204,3 +204,45 @@ test("Warehouse Middle A saves a review without scheduling and advances only by 
   expect(await assignmentStage()).toBe("interview");
   await expect(advance).not.toBeChecked();
 });
+
+test("Returns opens its legacy assessment, interview tracking and historical evaluation", async ({ page }) => {
+  const select = page.getByRole("combobox", { name: "Position", exact: true });
+  const returns = "Customer Service & Returns Specialist — Compliance Support · open";
+  await page.goto("/ats");
+  await page.getByRole("button", { name: "Applicant Screening", exact: true }).click();
+  await select.selectOption({ label: returns });
+  await expect(page.getByRole("heading", { name: "Customer Service & Returns Screening", exact: true })).toBeVisible();
+  await expect(page.getByText(/I manage returns end-to-end/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sync visible applications" })).toHaveCount(0);
+  const jules = page.locator("article").filter({ has: page.getByRole("heading", { name: "Synthetic Jules Mercer" }) });
+  await expect(jules.getByLabel("Interview status")).toHaveValue("scheduled");
+  await jules.getByRole("textbox", { name: /^Recruiter notes/ }).fill("Synthetic interview follow-up updated.");
+  await jules.getByRole("button", { name: "Save interview details" }).click();
+  await expect(jules.getByRole("status")).toHaveText("Saved");
+
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Review all resumes", exact: true }).click();
+  await expect(page.getByText(/Processed 2 of 2 · 2 drafts/)).toBeVisible();
+
+  await select.selectOption({ label: "Warehouse Picker · open" });
+  await expect(page.getByRole("heading", { name: "Batch Review", exact: true })).toBeVisible();
+  await expect(jules).toHaveCount(0);
+  await page.getByRole("button", { name: "Returns Screening", exact: true }).click();
+  await expect(select.locator("option:checked")).toHaveText(returns);
+  await expect(jules.getByRole("textbox", { name: /^Recruiter notes/ })).toHaveValue("Synthetic interview follow-up updated.");
+  await jules.getByRole("button", { name: "Open matched candidate profile" }).click();
+  await expect(page.getByRole("heading", { name: "Resume Evaluation — Customer Service & Returns" })).toBeVisible();
+  const evaluation = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Resume Evaluation — Customer Service & Returns" })
+  }).filter({ has: page.getByRole("button", { name: "Save resume evaluation", exact: true }) }).last();
+  await expect(evaluation.getByRole("spinbutton", { name: /Recruiter evaluation/ })).toHaveValue("86");
+  await expect(evaluation.getByRole("textbox", { name: /^Recruiter notes/ })).toHaveValue("Historical synthetic recruiter evaluation.");
+  await expect(page.getByRole("heading", { name: "Interviews (1)", exact: true })).toBeVisible();
+  await evaluation.getByRole("textbox", { name: /^Recruiter notes/ }).fill("Historical evaluation reviewed in the demo.");
+  await evaluation.getByRole("button", { name: "Save resume evaluation", exact: true }).click();
+  await expect(evaluation.getByRole("status")).toContainText("Evaluation saved");
+  await page.reload();
+  await page.getByRole("button", { name: /Synthetic Jules Mercer/ }).click();
+  await expect(evaluation.getByRole("textbox", { name: /^Recruiter notes/ })).toHaveValue("Historical evaluation reviewed in the demo.");
+  await expect(evaluation.getByRole("spinbutton", { name: /Recruiter evaluation/ })).toHaveValue("86");
+});

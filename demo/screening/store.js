@@ -1,3 +1,4 @@
+import { demoReturnsRequisition, legacyDraft, legacyResume, seedReturns } from "./returns-fixtures.js";
 import { assessmentResponse } from "./assessment-fixtures.js";
 import { postings as fixturePostings, requisitions as fixtureRequisitions } from "../../scripts/screening-lab/dataset.mjs";
 
@@ -10,7 +11,7 @@ const postings = fixturePostings.slice(1).map(posting => ({
 const requisitions = fixtureRequisitions.slice(1).map(item => ({
   ...item, department: "Operations", status: "open", openings: 3
 }));
-const recruiter = { user: { email: "recruiter@example.test" } };
+const recruiter = { access_token: "demo-only", user: { email: "recruiter@example.test" } };
 const candidateName = item => item.first_name + " " + item.last_name;
 const applicationDate = index => new Date(Date.UTC(2027, 0, 3 + index, 15)).toISOString();
 
@@ -74,7 +75,7 @@ function newCase(application, candidate, destination, questionnaire) {
 
 function read() {
   const saved = localStorage.getItem(storageKey);
-  if (!saved) return seed();
+  if (!saved) return seedReturns(seed());
   const state = JSON.parse(saved);
   state.applications.forEach((application, index) => {
     application.created_at ??= applicationDate(index);
@@ -90,7 +91,7 @@ function read() {
       if (snapshot?.screening_answers) snapshot.screening_answers[id] = application.screening_answers[id];
     }
   });
-  return state;
+  return seedReturns(state);
 }
 
 function save(state) {
@@ -294,7 +295,7 @@ function createInterview(state, params) {
   return { data: id };
 }
 
-const emptyLists = new Set(["ats_admin_resumes", "ats_admin_hiring_managers", "ats_admin_manager_feedback_labels"]);
+const emptyLists = new Set(["ats_admin_hiring_managers", "ats_admin_manager_feedback_labels"]);
 const listeners = new Set();
 function setSession(value) {
   if (value) sessionStorage.removeItem(storageKey);
@@ -318,10 +319,55 @@ export const marketingDevClient = {
     resetPasswordForEmail: async () => failure("Email is disabled in the demonstration."),
     updateUser: async () => failure("Account changes are disabled in the demonstration.")
   },
+  functions: {
+    async invoke(name, { body }) {
+      const state = read();
+      if (name === "analyze-candidate-resume") {
+        const draft = legacyDraft(state, body.candidateId, body.resumeId);
+        return draft ? { data: { draft } } : failure("Synthetic Returns resume unavailable.");
+      }
+      if (name !== "ats-returns-access") return failure("This action is outside the demonstration.");
+      const { records } = state.legacyReturns;
+      if (body.action === "list") return { data: { records } };
+      if (body.action === "update") {
+        const record = records.find(item => item.id === body.id);
+        if (!record) return failure("Synthetic Returns application unavailable.");
+        if (body.update.interview_teams_url) return failure("Leave the Teams URL blank in this demonstration.");
+        for (const key of ["interview_status", "interview_at", "interview_teams_url", "interview_notes"]) {
+          record[key] = body.update[key];
+        }
+        save(state);
+        return { data: { record } };
+      }
+      if (body.action === "resume") {
+        const record = records.find(item => item.resume_path === body.path);
+        if (!record) return failure("Synthetic Returns resume unavailable.");
+        const draft = legacyDraft(state, record.id + "-candidate", record.id + "-resume");
+        const url = URL.createObjectURL(new Blob([candidateName(record) + "\n" + draft.evidence], { type: "text/plain" }));
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        return { data: { url } };
+      }
+      return failure("This action is outside the demonstration.");
+    }
+  },
   async rpc(name, params) {
     const state = read();
     if (name === "ats_admin_directory") return { data: { candidates: state.candidates, interviews: state.interviews } };
-    if (name === "ats_admin_requisitions") return { data: { requisitions, assignments: state.assignments } };
+    if (name === "ats_admin_requisitions") return { data: { requisitions: [...requisitions, demoReturnsRequisition], assignments: state.assignments } };
+    if (name === "ats_admin_resumes") return { data: legacyResume(state, params.p_candidate_id) };
+    if (name === "ats_admin_resume_evaluation") {
+      const id = params.p_candidate_id;
+      if (params.p_requisition_id !== demoReturnsRequisition.id || !legacyResume(state, id).length) {
+        return failure("Returns evaluation unavailable.");
+      }
+      const evaluations = state.legacyReturns.evaluations;
+      if (params.p_save) {
+        evaluations[id] = Object.fromEntries(["scores", "evidence", "gaps", "questions", "recruiter_score", "recruiter_notes", "decision"]
+          .map(key => [key, params["p_" + key]]));
+        save(state);
+      }
+      return { data: evaluations[id] ?? null };
+    }
     if (name === "ats_admin_create_interview") return createInterview(state, params);
     if (name === "ats_admin_update_attendance") {
       const interview = state.interviews.find(item => item.id === params.p_interview_id);

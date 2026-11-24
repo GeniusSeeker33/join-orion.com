@@ -7,7 +7,7 @@ const job = {
   department: "Operations", is_active: true, hours: "40 hours/week", pay: "$21/hour",
   description: "Handle return requests, create carrier labels and coordinate receiving."
 };
-const req = { id: id(20), title: job.title, department: "Operations", status: "open", openings: 1 };
+const req = { id: id(20), title: "Synthetic universal requisition", department: "Operations", status: "open", openings: 1 };
 const questionnaire = {
   id: id(40), job_id: job.id, title: job.title, version: 1,
   questions: [{ id: "returns", prompt: "Describe a return you resolved." }]
@@ -105,7 +105,7 @@ test("recruiter publishes via Open Positions and saves evidence and follow-up ac
   });
   await page.goto("/ats");
   await page.getByRole("button", { name: "Open Positions", exact: true }).click();
-  await page.getByRole("button", { name: new RegExp(job.title) }).click();
+  await page.getByRole("button", { name: new RegExp(req.title) }).click();
   await page.getByLabel("Careers posting").selectOption(job.id);
   await page.getByLabel("Start from a role template").selectOption("0");
   await page.getByRole("button", { name: "Preview questionnaire" }).click();
@@ -325,4 +325,33 @@ test("weighted batch review retries only failed evaluations and keeps unknown to
   await expect(page.getByText("Processed 1 of 1")).toBeVisible();
   expect(attempts).toEqual([application.id, second.id, second.id]);
   await expect(page.getByRole("cell", { name: "35 / 60 assessed · incomplete" })).toHaveCount(2);
+});
+
+test("Returns is available before mapping and bypasses the universal screening API", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("synthetic-recruiter", "true"));
+  const calls = [];
+  await page.route("**/__screening_fixture", async route => {
+    const { kind, name } = route.request().postDataJSON();
+    if (kind === "function") calls.push(name);
+    const data = name === "ats_admin_requisitions" ? { requisitions: [req], assignments: [] } :
+      name === "ats-returns-access" ? { records: [application] } : { candidates: [] };
+    await route.fulfill({ json: { data } });
+  });
+  await page.route("**/api/ats-screening", async route => {
+    calls.push(route.request().postDataJSON().action);
+    await route.fulfill({ json: { applicants: [], nextOffset: null } });
+  });
+  await page.goto("/ats");
+  await page.getByRole("button", { name: "Applicant Screening", exact: true }).click();
+  const position = page.getByRole("combobox", { name: "Position", exact: true });
+  await position.selectOption({ label: job.title });
+  await expect(page.getByRole("heading", { name: "Customer Service & Returns Screening", exact: true })).toBeVisible();
+  await expect(page.getByText(application.screening_answers.returns)).toBeVisible();
+  expect([...new Set(calls.splice(0))]).toEqual(["ats-returns-access"]);
+  await position.selectOption(req.id);
+  await expect(page.getByText("No applications match this page and filter.")).toBeVisible();
+  expect([...new Set(calls.splice(0))]).toEqual(["applicants"]);
+  await page.getByRole("button", { name: "Returns Screening", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Customer Service & Returns Screening", exact: true })).toBeVisible();
+  expect([...new Set(calls)]).toEqual(["ats-returns-access"]);
 });

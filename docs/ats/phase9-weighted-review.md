@@ -17,3 +17,9 @@ The new [ATS-only rubric overlay](ats-screening-rubrics.sql) follows the Phase 2
 Save recruiter review accepts scores, notes and a follow-up decision without a date. Optional fields are validated when supplied. If a save fails, the applicant panel retains its edits and shows the error beside the save controls. A successful save updates Batch Review immediately. Assessment answers open on request.
 
 Use the ATS interview calendar to schedule an interview. That action leaves the assignment stage alone. To move a New or Screening assignment, enter a follow-up date and time in the review, explicitly check the move option, and save. The checkbox is disabled until the follow-up time is supplied. The review can still be saved without that option.
+
+## Returns access
+
+Applicant Screening routes Customer Service & Returns Specialist — Compliance Support to the original Returns view. The Returns Screening shortcut opens the same center with that position selected. Switching to another position opens the universal queue. The Returns assessment and resume rubrics, interview tracking and historical evaluation use their existing legacy endpoints. Candidate Directory shows the legacy resume evaluation for candidates with a Returns assignment.
+
+Opening Returns does not initiate an import or create an assignment. The existing Returns scheduler retains synchronization ownership. The Docker-free demonstration includes synthetic Returns applications, an interview and a historical evaluation. The operational legacy endpoints still require validation in a separately authorized integration rehearsal.

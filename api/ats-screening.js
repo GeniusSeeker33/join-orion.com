@@ -330,7 +330,7 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
     if (body.action === "configuration") return { position };
     if (!position) throw new ScreeningError(404, "Link a Careers posting in Open Positions first.");
     if (body.action === "route") {
-      if (!universalMapping(position, body.destinationId) || !position.requires_routing || position.requisition_id !== body.requisitionId ||
+      if (!universalMapping(position, body.requisitionId) || !universalMapping(position, body.destinationId) || !position.requires_routing || position.requisition_id !== body.requisitionId ||
           !position.alternate_requisition_id ||
           ![position.requisition_id, position.alternate_requisition_id].includes(body.destinationId)) {
         throw new ScreeningError(409, "Select a configured destination from the primary routing queue.");
