@@ -39,7 +39,11 @@ export default function BatchReview({ rows, rubric, interviews, onOpen, busy }) 
             linked?.attendance_status?.replaceAll("_", " ") || (linked || review?.interview_at ? "Scheduled" : row.application.interview_status ?? "—")];
           return <tr className="border-t border-slate-700" key={row.application.id}>
             <th className="px-2 py-2" scope="row">{name(row)}</th>
-            {cells.map((value, index) => <td className="px-2 py-2" key={headers[index + 1]}>{value}</td>)}
+            {cells.map((value, index) => <td className="px-2 py-2" key={headers[index + 1]}>
+              {index === 4 && verifiedTotal(row) !== null
+                ? <strong className="inline-block rounded bg-emerald-950 px-2 py-1 text-base text-emerald-200">{value}</strong>
+                : value}
+            </td>)}
             <td className="px-2 py-2"><button className="text-amber-300 underline" disabled={busy}
               onClick={() => onOpen(row.application.id)}>Open candidate</button></td>
           </tr>;

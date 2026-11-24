@@ -31,7 +31,7 @@ function localDate(value) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-function ApplicantReview({ row, requisitionId, candidates, interviews, feedback, onChanged, onRefresh, onSelectCandidate, destinations, onRouted, rubric, onDraft }) {
+function ApplicantReview({ row, requisitionId, candidates, interviews, feedback, onChanged, onRefresh, onSelectCandidate, destinations, onRouted, rubric, onDraft, onReviewSaved }) {
   const record = row.case;
   const application = record?.application ?? row.application;
   const [review, setReview] = useState(() => ({
@@ -69,7 +69,13 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
     try {
       const result = await screeningRequest(action, { ...payload, ...args });
       if (result.destination) onRouted(result.destination);
-      if (result.case) await onChanged(result.case, action === "sync" || args.advancePipeline);
+      if (result.case) {
+        if (action === "review") {
+          setAdvancePipeline(false);
+          onReviewSaved(success);
+        }
+        await onChanged(result.case, action === "sync" || args.advancePipeline);
+      }
       if (result.draft) {
         setDraft(result.draft);
         if (rubric) onDraft(application.id, result.draft);
@@ -85,12 +91,28 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
 
   function save(event) {
     event.preventDefault();
+    onReviewSaved("");
+    setMessage("");
+    const invalid = [...event.currentTarget.elements].find(field => field.willValidate && !field.validity.valid);
+    if (invalid) {
+      const label = invalid.labels?.[0]?.textContent.trim() || "Review field";
+      setError(invalid.type === "number"
+        ? `${label}: enter a whole number from ${invalid.min} to ${invalid.max}, or leave it blank.`
+        : `${label}: ${invalid.validationMessage}`);
+      invalid.focus({ preventScroll: true });
+      return;
+    }
+    const followUp = review.interview_at ? new Date(review.interview_at) : null;
+    if (followUp && Number.isNaN(followUp.getTime())) {
+      setError("Enter a valid follow-up date and time or leave it blank.");
+      return;
+    }
     run("review", {
       revision: record.revision, advancePipeline: advancePipeline && Boolean(review.interview_at),
       review: {
         ...review, ...(editRubric && Object.keys(points).length > 0 && { evaluation: { version: editRubric.version, scores: points } }),
         meeting_url: review.meeting_url.trim() || null,
-        interview_at: review.interview_at ? new Date(review.interview_at).toISOString() : null
+        interview_at: followUp?.toISOString() ?? null
       }
     }, "Recruiter review saved.");
   }
@@ -136,7 +158,7 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
       <summary className="cursor-pointer font-semibold">Application statement</summary>
       <p className="mt-2 whitespace-pre-wrap break-words">{application.cover_letter}</p>
     </details>}
-    <AssessmentAnswers application={application} questionnaire={questionnaire} open />
+    <AssessmentAnswers application={application} questionnaire={questionnaire} />
     {application.interview_status && <div className="space-y-1 text-sm text-slate-300">
       <p>Imported interview status: {application.interview_status.replaceAll("_", " ")}
         {localDate(application.interview_at) && ` · ${new Date(application.interview_at).toLocaleString()}`}</p>
@@ -165,7 +187,7 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
         interviews={linkedInterviews} feedback={feedback.filter(item => linkedInterviews.some(interview => interview.id === item.interview_id))}
         onRefresh={onRefresh} />
     </details>}
-    {!row.needsRoute && record && <form className="grid gap-3 border-t border-slate-700 pt-3" onSubmit={save}>
+    {!row.needsRoute && record && <form noValidate className="grid gap-3 border-t border-slate-700 pt-3" onSubmit={save}>
       {rubric && record.resume_path && <WeightedEvaluation rubric={rubric} draft={draft} saved={verified} completed={record.review?.completed} editRubric={editRubric}
         scores={points} onScore={(id, score) => setPoints(previous => ({ ...previous, [id]: score }))}
         onLatest={() => { setUseLatest(true); setPoints(Object.fromEntries(rubric.categories.map(item => [item.id, null]))); }} />}
@@ -174,12 +196,18 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
       <label>Follow-up decision<select className={field} value={review.decision} onChange={event => set("decision", event.target.value)}>
         {Object.entries(decisionLabels).map(([key,label]) => <option key={key} value={key}>{label}</option>)}
       </select></label>
-      <label>Screening follow-up time (local)<input className={field} type="datetime-local" value={review.interview_at} onChange={event => set("interview_at", event.target.value)} /></label>
+      <label>Screening follow-up time (local)<input className={field} type="datetime-local" value={review.interview_at} onChange={event => {
+        set("interview_at", event.target.value);
+        if (!event.target.value) setAdvancePipeline(false);
+      }} /></label>
       <label>Screening meeting URL (optional)<input className={field} maxLength={1000} type="url" value={review.meeting_url} onChange={event => set("meeting_url", event.target.value)} /></label>
       {linkedCandidate && <label className="flex gap-2"><input type="checkbox" checked={advancePipeline && Boolean(review.interview_at)}
-        disabled={!review.interview_at} onChange={event => setAdvancePipeline(event.target.checked)} />
+        disabled={!review.interview_at} aria-describedby="advance-interview-help" onChange={event => setAdvancePipeline(event.target.checked)} />
         Move this candidate’s New or Screening assignment to Interview when saving this time
       </label>}
+      {linkedCandidate && <p id="advance-interview-help" className="text-sm text-slate-300">
+        Enter a follow-up date and time to enable this optional stage change. You can save the review without scheduling or moving the assignment.
+      </p>}
       <label className="flex gap-2"><input type="checkbox" checked={review.completed} onChange={event => set("completed", event.target.checked)} /> Mark screening review complete</label>
       <button className={primary} disabled={busy}>Save recruiter review</button>
     </form>}
@@ -198,6 +226,7 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
   const [error, setError] = useState("");
   const [batch, setBatch] = useState(null);
   const [routingNotice, setRoutingNotice] = useState("");
+  const [reviewNotice, setReviewNotice] = useState("");
   useEffect(() => {
     let live = true;
     screeningRequest("applicants", { requisitionId, offset, weighted: true })
@@ -267,6 +296,7 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
 
   return <>
     {error && <p role="alert" className="text-rose-300">{error}</p>}
+    {reviewNotice && !row && <p role="status" className="text-emerald-300">{reviewNotice}</p>}
     {routingNotice && <p role="status" className="text-emerald-300">{routingNotice}</p>}
     {!list && !error && <p role="status">Loading applications…</p>}
     {list && <>
@@ -293,7 +323,7 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
         <button className={button} disabled={batch?.running} onClick={() => setReload(value => value + 1)}>Refresh applications</button>
         <button className={button} disabled={batch?.running || !visible.some(item => !item.needsRoute)} onClick={() => runBatch("sync")}>Sync visible applications</button>
         <button className={button} disabled={batch?.running || !visible.some(item => !item.needsRoute && item.case?.resume_path && (list.rubric || item.case?.questionnaire))}
-          onClick={() => runBatch("draft")}>Generate visible evidence drafts</button>
+          onClick={() => runBatch("draft")}>Batch Resume Evaluation</button>
       </div>
       {list.rubric && <BatchReview rows={visible} rubric={list.rubric} interviews={interviews}
         onOpen={id => { setSelected(id); requestAnimationFrame(() => document.getElementById("screening-selected-application")?.scrollIntoView({ block: "start" })); }} busy={batch?.running} />}
@@ -313,8 +343,8 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
         </li>)}
         {!visible.length && <li>No applications match this page and filter.</li>}
         </ul>
-        {row && !batch?.running && <ApplicantReview key={`${row.application.id}:${row.case?.revision ?? "unsynced"}:${row.case?.candidate_id ?? ""}`}
-          row={row} rubric={list.rubric} onDraft={updateDraft} destinations={destinations} onRouted={routeSaved} requisitionId={requisitionId} candidates={candidates} interviews={interviews} feedback={feedback} onChanged={update} onRefresh={onRefresh} onSelectCandidate={onSelectCandidate} />}
+        {row && !batch?.running && <ApplicantReview key={`${row.application.id}:${row.case?.candidate_id ?? ""}`}
+          row={row} onReviewSaved={setReviewNotice} rubric={list.rubric} onDraft={updateDraft} destinations={destinations} onRouted={routeSaved} requisitionId={requisitionId} candidates={candidates} interviews={interviews} feedback={feedback} onChanged={update} onRefresh={onRefresh} onSelectCandidate={onSelectCandidate} />}
       </div>
       <div className="flex gap-3">
         {offset > 0 && <button className={button} disabled={batch?.running} onClick={() => { setList(null); setSelected(""); setOffset(value => Math.max(0, value - 30)); }}>Previous page</button>}

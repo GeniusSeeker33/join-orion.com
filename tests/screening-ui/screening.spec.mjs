@@ -120,15 +120,18 @@ test("recruiter publishes via Open Positions and saves evidence and follow-up ac
     await page.getByRole("button", { name: /Synthetic Applicant/ }).click();
   }
   await openApplicant();
+  await page.getByText(/Assessment answers · Version 1/).click();
   await expect(page.getByText(questionnaire.questions[0].prompt)).toBeVisible();
   await expect(page.getByText("Total applicants", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Sync application", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Open candidate profile and interview calendar" })).toBeVisible();
+  await page.getByText(/Assessment answers · Version 1/).click();
   await expect(page.getByText("Coordinated receiving and documented the refund.")).toBeVisible();
   await page.getByText("ATS interview calendar", { exact: true }).click();
   await page.getByLabel("Date", { exact: true }).fill("2026-12-01");
   await page.getByRole("button", { name: "Schedule interview", exact: true }).click();
   await expect(page.getByText("History and attendance (1)")).toBeVisible();
-  await page.getByRole("button", { name: "Generate visible evidence drafts" }).click();
+  await page.getByRole("button", { name: "Batch Resume Evaluation" }).click();
   await expect(page.getByText("Synthetic Applicant · Draft ready")).toBeVisible();
   await page.getByRole("button", { name: /Synthetic Applicant/ }).click();
   await expect(page.getByText("AI draft for recruiter verification")).toBeVisible();
@@ -317,7 +320,7 @@ test("weighted batch review retries only failed evaluations and keeps unknown to
   await page.goto("/ats");
   await page.getByRole("button", { name: "Applicant Screening", exact: true }).click();
   await page.getByRole("combobox", { name: "Position", exact: true }).selectOption(requisition.id);
-  await page.getByRole("button", { name: "Generate visible evidence drafts" }).click();
+  await page.getByRole("button", { name: "Batch Resume Evaluation" }).click();
   await page.getByRole("button", { name: "Retry failed evaluations" }).click();
   await expect(page.getByText("Processed 1 of 1")).toBeVisible();
   expect(attempts).toEqual([application.id, second.id, second.id]);

@@ -11,3 +11,9 @@ Batch Review shows the visible requisition page with application dates, assessme
 For preliminary UI acceptance, run `npm run demo:screening` in the existing Codespace and open the private port 5191. Synthetic examples include documented experience and training-only resumes with unverified categories. The demo adapter keeps rubric history, drafts, scores, routing and decisions in your browser and never calls an AI or operational service.
 
 The new [ATS-only rubric overlay](ats-screening-rubrics.sql) follows the Phase 2 ATS overlay in an isolated replay. No Careers schema change is needed for weighting. Install the new overlay on operational ATS only with separate approval and after the maintained baseline and full integration rehearsal pass. Operational rubric publication and weighted draft generation remain blocked by the API while the pilot is on hold.
+
+## Saving and scheduling
+
+Save recruiter review accepts scores, notes and a follow-up decision without a date. Optional fields are validated when supplied. If a save fails, the applicant panel retains its edits and shows the error beside the save controls. A successful save updates Batch Review immediately. Assessment answers open on request.
+
+Use the ATS interview calendar to schedule an interview. That action leaves the assignment stage alone. To move a New or Screening assignment, enter a follow-up date and time in the review, explicitly check the move option, and save. The checkbox is disabled until the follow-up time is supplied. The review can still be saved without that option.

@@ -51,7 +51,7 @@ test("recruiter exercises the persisted demonstration using the real ATS interfa
   await select("Warehouse Packer");
   await page.getByRole("button", { name: "Sync visible applications" }).click();
   await expect(page.getByText("Processed 2 of 2")).toBeVisible();
-  await page.getByRole("button", { name: "Generate visible evidence drafts" }).click();
+  await page.getByRole("button", { name: "Batch Resume Evaluation" }).click();
   await expect(page.getByText("Processed 3 of 3")).toBeVisible();
 
   const routed = page.getByRole("button", { name: /Synthetic Warehouse Picker Routing/ });
@@ -116,4 +116,91 @@ test("shared ATS styles render the responsive cards and navigation", async ({ pa
   await page.getByRole("button", { name: /Synthetic Warehouse Middle/ }).first().click();
   await expect(page.getByRole("heading", { name: "Position pipeline" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
+test("Warehouse Middle A saves a review without scheduling and advances only by explicit request", async ({ page }) => {
+  const name = "Synthetic Warehouse Middle (Hybrid Maintenance) A";
+  const selectApplicant = async () => {
+    await page.getByRole("button", { name: "Applicant Screening", exact: true }).click();
+    await page.getByRole("combobox", { name: "Position", exact: true })
+      .selectOption({ label: "Warehouse Middle (Hybrid Maintenance) · open" });
+    await page.getByRole("button", { name: /^Synthetic Warehouse Middle \(Hybrid Maintenance\) A\b/ }).click();
+  };
+  const comparisonRow = page.getByRole("row").filter({ has: page.getByRole("rowheader", { name, exact: true }) });
+  const detail = page.locator("#screening-selected-application");
+  const form = detail.locator("form").filter({ hasText: "Save recruiter review" });
+  const points = form.getByRole("spinbutton");
+  const notes = form.getByRole("textbox", { name: /^Recruiter notes/ });
+  const decision = form.getByLabel("Follow-up decision");
+  const time = form.getByLabel("Screening follow-up time (local)");
+  const advance = form.getByRole("checkbox", { name: /Move this candidate/ });
+  const save = () => form.getByRole("button", { name: "Save recruiter review" }).click();
+  const assignmentStage = () => page.evaluate(() => JSON.parse(localStorage.getItem("orion-screening-demonstration-v1"))
+    .assignments.find(item => item.candidate_id.endsWith("000000000022-A-candidate"))?.stage);
+
+  await page.goto("/ats");
+  await selectApplicant();
+  const answer = detail.getByText(/I replaced worn tape-machine rollers/);
+  await expect(answer).toBeHidden();
+  await detail.getByText(/Assessment answers · Version 1/).click();
+  await expect(answer).toBeVisible();
+  await expect(detail.getByText(/I would block off the wet walkway/)).toBeVisible();
+  await expect(advance).toBeDisabled();
+  await expect(form.getByText(/Enter a follow-up date and time to enable/)).toBeVisible();
+  await expect(time).toHaveValue("");
+  await detail.getByRole("button", { name: "Generate evidence draft" }).click();
+
+  for (const [index, value] of [36, 20, 18, 12].entries()) await points.nth(index).fill(String(value));
+  await notes.fill("Verified preventive maintenance and safe escalation.");
+  await decision.selectOption("contact");
+  await form.getByLabel("Mark screening review complete").check();
+  await save();
+  await expect(detail.getByRole("alert")).toContainText("enter a whole number from 0 to 35");
+  await expect(points.first()).toHaveValue("36");
+  await expect(notes).toHaveValue("Verified preventive maintenance and safe escalation.");
+  await expect(decision).toHaveValue("contact");
+  await expect(comparisonRow.getByRole("cell", { name: "Pending", exact: true })).toBeVisible();
+
+  await points.first().fill("30");
+  const meeting = form.getByLabel("Screening meeting URL (optional)");
+  await meeting.fill("https://example.test/synthetic");
+  await save();
+  await expect(detail.getByRole("alert")).toContainText("Leave the meeting URL blank");
+  await expect(points.first()).toHaveValue("30");
+  await expect(notes).toHaveValue("Verified preventive maintenance and safe escalation.");
+  await expect(decision).toHaveValue("contact");
+  await meeting.clear();
+  await save();
+  await expect(detail.getByText("Recruiter review saved.", { exact: true })).toBeVisible();
+  await expect(comparisonRow.getByRole("cell", { name: "Complete", exact: true })).toBeVisible();
+  await expect(comparisonRow.getByRole("cell", { name: "Call candidate", exact: true })).toBeVisible();
+  await expect(comparisonRow.getByRole("cell", { name: "80 / 100 · v1" }).locator("strong")).toBeVisible();
+  expect(await assignmentStage()).toBe("new");
+
+  await page.reload();
+  await selectApplicant();
+  await expect(notes).toHaveValue("Verified preventive maintenance and safe escalation.");
+  await expect(decision).toHaveValue("contact");
+  await expect(time).toHaveValue("");
+  await detail.getByRole("button", { name: "Regenerate evidence draft" }).click();
+  await expect(detail.getByText("Evidence draft ready for verification.")).toBeVisible();
+  await expect(comparisonRow.getByRole("cell", { name: "80 / 100 · v1" })).toBeVisible();
+  await expect(notes).toHaveValue("Verified preventive maintenance and safe escalation.");
+
+  await detail.getByText("ATS interview calendar", { exact: true }).click();
+  await detail.getByLabel("Date", { exact: true }).fill("2027-02-10");
+  await detail.getByLabel("Start", { exact: true }).fill("10:00");
+  await detail.getByLabel("End", { exact: true }).fill("10:30");
+  await detail.getByRole("button", { name: "Schedule interview", exact: true }).click();
+  await expect(detail.getByText("History and attendance (1)")).toBeVisible();
+  expect(await assignmentStage()).toBe("new");
+
+  await time.fill("2027-02-10T10:00");
+  await expect(advance).toBeEnabled();
+  await expect(advance).not.toBeChecked();
+  await advance.check();
+  await save();
+  await expect(detail.getByText("Recruiter review saved.", { exact: true })).toBeVisible();
+  expect(await assignmentStage()).toBe("interview");
+  await expect(advance).not.toBeChecked();
 });

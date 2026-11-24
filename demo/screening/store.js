@@ -1,3 +1,4 @@
+import { assessmentResponse } from "./assessment-fixtures.js";
 import { postings as fixturePostings, requisitions as fixtureRequisitions } from "../../scripts/screening-lab/dataset.mjs";
 
 import { defaultRubric, validCategories } from "../../src/components/screening/rubrics.js";
@@ -12,9 +13,6 @@ const requisitions = fixtureRequisitions.slice(1).map(item => ({
 const recruiter = { user: { email: "recruiter@example.test" } };
 const candidateName = item => item.first_name + " " + item.last_name;
 const applicationDate = index => new Date(Date.UTC(2027, 0, 3 + index, 15)).toISOString();
-const assessmentResponse = id => id.endsWith("-A")
-  ? "I documented the checklist, flagged discrepancies and verified the handoff before release."
-  : "I assisted a lead on the task and asked them to verify the result before release.";
 
 function seed() {
   const positions = {};
@@ -42,7 +40,7 @@ function seed() {
           email: "applicant-" + (applications.length + 1) + "@example.test", phone: "202-555-0100",
           created_at: applicationDate(applications.length),
           screening_answers: Object.fromEntries(posting.questions.map(({ id }) => [id,
-            assessmentResponse(destination + "-" + suffix)]))
+            assessmentResponse(title, id, destination + "-" + suffix)]))
         };
         applications.push(application);
         if (suffix === "Routing") continue;
@@ -83,8 +81,12 @@ function read() {
     const snapshot = state.cases[application.id]?.application;
     if (snapshot) snapshot.created_at ??= application.created_at;
     for (const [id, value] of Object.entries(application.screening_answers ?? {})) {
-      if (value !== "Sample response for " + id + ".") continue;
-      application.screening_answers[id] = assessmentResponse(application.id);
+      const priorFixture = value === "Sample response for " + id + "." ||
+        value === "I documented the checklist, flagged discrepancies and verified the handoff before release." ||
+        value === "I assisted a lead on the task and asked them to verify the result before release.";
+      const replacement = assessmentResponse(application.position_title, id, application.id);
+      if (!priorFixture || !replacement) continue;
+      application.screening_answers[id] = replacement;
       if (snapshot?.screening_answers) snapshot.screening_answers[id] = application.screening_answers[id];
     }
   });

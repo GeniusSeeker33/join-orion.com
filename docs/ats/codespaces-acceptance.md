@@ -65,7 +65,7 @@ The yellow **DEMONSTRATION — SYNTHETIC DATA ONLY** banner identifies this sess
 
 1. In **Open Positions**, choose a requisition. Edit a question, preview it, save a draft, and publish a synthetic revision. Open its assessment link to inspect the published preview.
 2. In **Applicant Screening**, explore all six requisitions. In **Warehouse Picker**, open **Synthetic Warehouse Picker Routing**, choose Picker or Packer, and confirm. Find the application in the chosen requisition.
-3. Use **Sync visible applications** and **Generate visible evidence drafts**. Open an applicant and compare the preset evidence with the supplied synthetic resume. Save a decision, notes, and completion. Use the review filter to check the result.
+3. Use **Sync visible applications** and **Batch Resume Evaluation**. Open an applicant and compare the preset evidence with the supplied synthetic resume. Save a decision, notes, and completion. Use the review filter to check the result.
 4. Open **ATS interview calendar**, set a date and times, and schedule the synthetic interview. Leave the meeting URL blank. Refresh, reopen the applicant, and check the review, evidence, and calendar history.
 
 The separate Vite entry runs the real ATS screens with browser-local synthetic adapters. It makes no database, email, production worker, or AI calls. The demo config blocks network connections and refuses production builds. The regular production build excludes the demo. This is preliminary interface acceptance. The Docker integration tests and maintained-schema replay remain separate gates.
