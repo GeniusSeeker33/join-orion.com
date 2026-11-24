@@ -50,3 +50,22 @@ Use the managed Docker workspace already shown to support the two isolated stack
 If neither environment can be shared with recruiters, the next smallest option is a Docker-free, loopback-only demonstration based on the existing browser fixtures. It would be suitable for preliminary navigation, routing, and review feedback with clearly labeled synthetic state. It would leave session isolation, private storage, migrations, and actual schema compatibility for full integration acceptance. A Compose rewrite or changing the pinned CLI should wait until the report identifies a failing component that requires it.
 
 Phase 8.2 was verified on managed Docker 29.9.2. Captured Docker events identified both successful one-shot initialization jobs and their exit codes. Both stacks, the recruiter browser check, 17 Screening tests and targeted lint passed. The original Codespaces failure still needs a report from the updated diagnostics to identify its cause.
+
+## Phase 8.3 Docker-free recruiter demonstration
+
+In your existing Codespace, switch to `feature/universal-screening-engine` and pull its latest commit. Run `npm ci` if dependencies are missing. Start the demo from the repository root.
+
+```bash
+npm run demo:screening
+```
+
+In Codespaces, open **Ports**, forward port **5191** if it did not appear automatically, and confirm **Port Visibility → Private**. Choose **Open in Browser** on that port and append `/ats` to the forwarded URL. Use the GitHub account authorized for the Codespace. Keep the terminal running while reviewing. The server binds to loopback and recognizes the Codespace's exact forwarded hostname when the Codespaces environment variables are available.
+
+The yellow **DEMONSTRATION — SYNTHETIC DATA ONLY** banner identifies this session. The app opens with a simulated recruiter session. If you sign out, the demo email is prefilled and the password is `demo-only`. The demo stores changes in your browser for this forwarded origin, so keep using the same browser profile and URL. Assessment preview links show versions saved in that browser. To start over, clear site data for the demo origin.
+
+1. In **Open Positions**, choose a requisition. Edit a question, preview it, save a draft, and publish a synthetic revision. Open its assessment link to inspect the published preview.
+2. In **Applicant Screening**, explore all six requisitions. In **Warehouse Picker**, open **Synthetic Warehouse Picker Routing**, choose Picker or Packer, and confirm. Find the application in the chosen requisition.
+3. Use **Sync visible applications** and **Generate visible evidence drafts**. Open an applicant and compare the preset evidence with the supplied synthetic resume. Save a decision, notes, and completion. Use the review filter to check the result.
+4. Open **ATS interview calendar**, set a date and times, and schedule the synthetic interview. Leave the meeting URL blank. Refresh, reopen the applicant, and check the review, evidence, and calendar history.
+
+The separate Vite entry runs the real ATS screens with browser-local synthetic adapters. It makes no database, email, production worker, or AI calls. The demo config blocks network connections and refuses production builds. The regular production build excludes the demo. This is preliminary interface acceptance. The Docker integration tests and maintained-schema replay remain separate gates.
