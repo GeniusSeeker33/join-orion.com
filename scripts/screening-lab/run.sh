@@ -60,7 +60,8 @@ cleanup() {
 trap cleanup EXIT
 node scripts/screening-lab/prepare.mjs "$root" "$run"
 start_stack() {
-  local realm=$1 network db image container bindings
+  local realm=$1 network db image container bindings started ended
+  local -a cli_diagnostics=()
   stage="$realm Docker network setup"
   network="orion_lab_${realm}_${run:0:12}"
   echo "Creating the private $realm Docker bridge"
@@ -72,8 +73,22 @@ start_stack() {
   "$cli" gen signing-key --workdir "$root/$realm" --yes >"$root/$realm.keys.log" 2>&1
   stage="$realm Supabase initialization"
   echo "Initializing $realm PostgreSQL, Auth and Storage and applying local migrations. This may take several minutes."
-  "$cli" start --workdir "$root/$realm" --network-id "$network" \
-    --exclude edge-runtime,studio,postgres-meta,realtime,imgproxy,vector,logflare,mailpit >"$root/$realm.start.log" 2>&1
+  # Keep bootstrap stderr available for classification in synthetic mode only.
+  if [[ -z "${ORION_ATS_REVIEWED_SQL:-}" ]]; then cli_diagnostics+=(--debug); fi
+  started=$(node -p 'new Date().toISOString()')
+  if "$cli" start "${cli_diagnostics[@]}" --workdir "$root/$realm" --network-id "$network" \
+    --exclude edge-runtime,studio,postgres-meta,realtime,imgproxy,vector,logflare,mailpit >"$root/$realm.start.log" 2>&1; then
+    :
+  else
+    ended=$(node -p 'new Date().toISOString()')
+    # Recent Docker events survive removal of the one-shot migration containers.
+    "${docker[@]}" events --since "$started" --until "$ended" --filter type=container \
+      --filter "label=com.supabase.cli.project=orion_lab_${realm}_${run:0:12}" \
+      --filter event=start --filter event=die --filter event=oom \
+      --format '{{.Action}} {{index .Actor.Attributes "image"}} {{index .Actor.Attributes "exitCode"}}' \
+      >"$root/$realm.events" 2>"$root/$realm.events.log" || true
+    return 1
+  fi
   stage="$realm network verification"
   "$cli" status --workdir "$root/$realm" --output json >"$root/$realm.status.json" 2>"$root/$realm.status.log"
   "${docker[@]}" network inspect "$network" -f '{{range .Containers}}{{println .Name}}{{end}}' >"$root/$realm.containers"

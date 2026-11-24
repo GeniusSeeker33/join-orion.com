@@ -17,7 +17,14 @@ test("lab startup diagnostics retain fixed signals without raw database or key m
       "Initialising schema...",
       "Elixir.Realtime.Repo DBConnection.ConnectionError secret=synthetic-secret-marker",
       "failed to prune volumes: a prune operation is already running",
-      "arbitrary SQL marker"
+      "SQLSTATE 28P01 arbitrary SQL marker"
+    ].join("\n"));
+    await writeFile(join(scratch, "careers.events"), [
+      "start docker.io/supabase/storage-api:v1.54.1 ",
+      "die docker.io/supabase/storage-api:v1.54.1 0",
+      "start supabase/gotrue:v2.188.1 ",
+      "die supabase/gotrue:v2.188.1 1",
+      "start unrelated-image synthetic-secret-marker"
     ].join("\n"));
     const result = execFileSync(process.execPath,
       ["scripts/screening-lab/startup-checks.mjs", "report", scratch, "careers Supabase initialization"],
@@ -25,6 +32,10 @@ test("lab startup diagnostics retain fixed signals without raw database or key m
     assert.match(result, /PostgreSQL ReadyForQuery/);
     assert.match(result, /Realtime\/PostgreSQL connection failure/);
     assert.match(result, /another active prune/);
+    assert.match(result, /SQLSTATE 28P01/);
+    assert.match(result, /Storage container die \(exit 0\)/);
+    assert.match(result, /Auth container die \(exit 1\)/);
+    assert.doesNotMatch(result, /unrelated-image/);
     assert.doesNotMatch(result, /synthetic-secret-marker|arbitrary SQL marker/);
   } finally {
     await rm(scratch, { recursive: true, force: true });
