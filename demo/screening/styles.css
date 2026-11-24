@@ -1,0 +1,4 @@
+@import "../../src/index.css";
+
+/* The demo Vite root excludes the shared ATS components from automatic scanning. */
+@source "../../src";

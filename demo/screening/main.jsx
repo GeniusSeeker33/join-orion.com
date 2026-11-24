@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
 import ATSWorkspace from "../../src/ATSWorkspace.jsx";
-import "../../src/index.css";
+import "./styles.css";
 import { readQuestionnaire } from "./store.js";
 
 const assessment = window.location.pathname.match(/^\/assessment\/([^/]+)$/);

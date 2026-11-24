@@ -77,3 +77,22 @@ test("recruiter exercises the persisted demonstration using the real ATS interfa
   await expect(page.getByText("History and attendance (1)")).toBeVisible();
   expect(outside).toEqual([]);
 });
+
+test("shared ATS styles render the responsive cards and navigation", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/ats");
+  const nav = page.getByRole("navigation");
+  await expect(nav).toHaveCSS("display", "flex");
+  await expect(nav).toHaveCSS("column-gap", "8px");
+
+  const cards = page.getByText("Candidates", { exact: true }).locator("../..");
+  await expect(cards).toHaveCSS("display", "grid");
+  await expect(cards).toHaveCSS("grid-template-columns", /^\S+ \S+ \S+ \S+$/);
+  await expect(cards.getByText("Candidates", { exact: true }).locator("..")).toHaveCSS("border-top-width", "1px");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(cards).toHaveCSS("grid-template-columns", /^\S+$/);
+  await page.getByRole("button", { name: /Synthetic Warehouse Middle/ }).first().click();
+  await expect(page.getByRole("heading", { name: "Position pipeline" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
