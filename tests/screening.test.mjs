@@ -18,8 +18,11 @@ test("Careers publishes immutable versions and preserves referral attribution", 
     await db.exec(`reset role; create role service_role bypassrls;
       alter table public.job_postings add column created_at timestamptz default now(), add column hours text,
         add column pay text, add column location text, add column description text;
-      alter table public.candidate_applications add column resume_path text, add column phone text;`);
+      alter table public.candidate_applications add column resume_path text, add column phone text, add column created_at timestamptz default now();`);
     await db.exec(await migration("supabase/migrations/20261124000000_screening_questionnaires.sql"));
+    const queueMigration = await migration("supabase/migrations/20261124010000_screening_sync_queue.sql");
+    await db.exec(queueMigration);
+    await db.exec(queueMigration);
     const referralCode = (await db.query("select code from referrals.employees")).rows[0].code;
     const write = async (items, publish, job = id(10), req = id(20)) => (await db.query(
       "select write_screening_questionnaire($1,$2,$3,$4,$5) as position",
@@ -69,9 +72,38 @@ test("Careers publishes immutable versions and preserves referral attribution", 
     await db.exec("reset role");
     assert.deepEqual((await db.query("select screening_answers from candidate_applications where id=$1", [id(37)])).rows[0].screening_answers,
       { returns: "Handled returns before versioning." });
+    await db.exec("set role service_role");
+    const claim = async () => (await db.query("select * from claim_screening_sync(10)")).rows;
+    const leased = await claim();
+    assert.deepEqual(leased.map(item => item.application_id).sort(), [id(30), id(37)]);
+    assert.equal((await claim()).length, 0);
+    const item = leased.find(entry => entry.application_id === id(30));
+    await db.query("select finish_screening_sync($1,$2,'synced')", [item.application_id, id(90)]);
+    assert.equal((await db.query("select state from screening_sync_queue where application_id=$1", [id(30)])).rows[0].state, "pending");
+    await db.query("select finish_screening_sync($1,$2,'synced')", [item.application_id, item.lease_id]);
+    assert.equal((await db.query("select state from screening_sync_queue where application_id=$1", [id(30)])).rows[0].state, "synced");
+    const legacy = leased.find(entry => entry.application_id === id(37));
+    await db.query("select finish_screening_sync($1,$2,'retry')", [legacy.application_id, legacy.lease_id]);
+    assert.equal((await claim()).length, 0);
+    await db.exec("reset role");
+    await db.query("update candidate_applications set resume_path=$2 where id=$1", [id(37), id(37) + "/late.pdf"]);
+    await db.exec("set role service_role");
+    const revived = await claim();
+    assert.equal(revived.length, 1);
+    assert.equal(revived[0].application_id, id(37));
+    await asUser(db, null);
+    await assert.rejects(claim(), /permission denied/);
+    await db.exec("reset role");
+    await db.query("update screening_sync_queue set attempts=5,available_at=now()-interval '1 second' where application_id=$1", [id(37)]);
+    await db.exec("set role service_role");
+    assert.equal((await claim()).length, 0);
+    assert.equal((await db.query("select state from screening_sync_queue where application_id=$1", [id(37)])).rows[0].state, "failed");
+    await db.exec("reset role");
     const old = (await db.query(`select a.position_title,a.screening_answers,v.questions
       from candidate_applications a join screening_versions v on v.id=a.screening_version_id where a.id=$1`, [id(30)])).rows[0];
     assert.deepEqual(old, { position_title: "Sales Executive", screening_answers: { experience: "Entered orders" }, questions: first });
+    await db.exec(queueMigration);
+    assert.equal((await db.query("select state from screening_sync_queue where application_id=$1", [id(30)])).rows[0].state, "synced");
   } finally {
     await db.close();
   }
@@ -96,6 +128,9 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
       insert into ats_dev.requisition_candidates values('${id(20)}','${id(25)}','hired');
       insert into ats_dev.employment values('${id(25)}','active');`);
     await db.exec(await migration("docs/ats/ats-screening-overlay.sql"));
+    const atsUpgrade = await migration("docs/ats/ats-screening-phase2.sql");
+    await db.exec(atsUpgrade);
+    await db.exec(atsUpgrade);
     const source = (app, extra = {}) => ({ id: app, first_name: "Synthetic", last_name: "Applicant",
       email: "synthetic@example.test", phone: "+1 812-555-0100", position_id: id(10), screening_answers: { experience: "Order management" }, ...extra });
     const sync = async (data, manual = null, actor = id(1)) => (await db.query(
@@ -104,7 +139,7 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
     )).rows[0].item;
     await asUser(db, 2);
     assert.equal((await db.query("select ats_screening_authorize() as actor")).rows[0].actor, null);
-    await assert.rejects(sync(source(id(30))), /permission denied/);
+    await assert.rejects(sync(source(id(30)), null, null), /permission denied/);
     await assert.rejects(db.query("select * from ats_screening_cases"), /permission denied/);
     await asUser(db, 1);
     assert.equal((await db.query("select ats_screening_authorize() as actor")).rows[0].actor, id(1));
@@ -112,6 +147,7 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
     await assert.rejects(sync(source(id(30)), null, id(2)), /insufficient_privilege/);
     assert.equal((await sync(source(id(30)))).candidate_id, id(25));
     assert.equal((await sync(source(id(30)))).candidate_id, id(25));
+    assert.equal((await sync(source(id(33)), null, null)).candidate_id, id(25));
     const ambiguous = source(id(31), { first_name: "Different" });
     assert.equal((await sync(ambiguous)).identity_state, "needs_review");
     assert.equal((await sync(ambiguous, id(25))).candidate_id, id(25));
@@ -128,7 +164,18 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
     const save = revision => db.query("select ats_screening_save_review($1,$2,$3,$4) item", [id(1), id(30), revision, JSON.stringify(review)]);
     assert.equal((await save(0)).rows[0].item.revision, 1);
     await assert.rejects(save(0), /Review changed/);
-    assert.deepEqual((await sync(source(id(30)))).review, review);
+    const legacyStatus = { interview_status: "scheduled", interview_at: "2026-12-02T15:00:00Z" };
+    const refreshed = await sync(source(id(30), legacyStatus), null, null);
+    assert.deepEqual(refreshed.review, review);
+    assert.equal(refreshed.application.interview_status, "scheduled");
+    await sync(source(id(30), legacyStatus), null, null);
+    assert.equal((await db.query("select count(*)::int n from ats_screening_audit where action='source_details_refreshed' and actor is null")).rows[0].n, 1);
+    const saveInterview = (application, revision) => db.query(
+      "select ats_screening_save_interview_review($1,$2,$3,$4,true) item",
+      [id(1), application, revision, JSON.stringify(review)]
+    );
+    await saveInterview(id(32), 0);
+    await saveInterview(id(30), 1);
     const lease = () => db.query("select ats_screening_claim_evidence($1,$2) as item", [id(30), "digest"]);
     assert.ok((await lease()).rows[0].item.lease);
     assert.equal((await lease()).rows[0].item.draft, null);
@@ -136,11 +183,15 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
     assert.deepEqual((await lease()).rows[0].item.draft, { experience: [] });
     await db.exec("reset role");
     assert.equal((await db.query("select stage from ats_dev.requisition_candidates where candidate_id=$1", [id(25)])).rows[0].stage, "hired");
+    assert.equal((await db.query("select stage from ats_dev.requisition_candidates where candidate_id=$1", [newId])).rows[0].stage, "interview");
     assert.equal((await db.query("select employment_status from ats_dev.employment where candidate_id=$1", [id(25)])).rows[0].employment_status, "active");
     assert.equal((await db.query("select count(*)::int n from ats_dev.candidates")).rows[0].n, 2);
+    assert.equal((await db.query("select count(*)::int n from ats_dev.requisition_candidates")).rows[0].n, 2);
     assert.equal((await db.query("select application_source from ats_dev.candidates where id=$1", [newId])).rows[0].application_source, "Indeed");
     assert.equal((await db.query("select count(*)::int n from ats_screening_audit where action='resume_synchronized'")).rows[0].n, 1);
     assert.equal((await db.query("select public from storage.buckets")).rows[0].public, false);
+    await db.exec(atsUpgrade);
+    assert.deepEqual((await db.query("select review from ats_screening_cases where application_id=$1", [id(30)])).rows[0].review, review);
   } finally {
     await db.close();
   }
@@ -157,8 +208,7 @@ test("all six templates use job-related prompts and exact inputs determine the e
   assert.notEqual(evidenceFingerprint("bytes", first), evidenceFingerprint("bytes", revised));
 });
 
-test("resume evidence extracts text from a synthetic PDF", async () => {
-  const stream = "BT /F1 12 Tf 36 250 Td (Synthetic order fulfillment) Tj ET";
+function syntheticPdf(stream) {
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -174,7 +224,15 @@ test("resume evidence extracts text from a synthetic PDF", async () => {
   });
   const xref = content.length;
   content += `xref\n0 6\n0000000000 65535 f \n${offsets.map(offset => `${offset} 00000 n \n`).join("")}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  assert.match(await extractResumeText(new Blob([content]), "synthetic.pdf"), /Synthetic order fulfillment/);
+  return new Blob([content]);
+}
+
+test("resume evidence extracts PDF and DOCX text and detects image-only PDFs", async () => {
+  const textPdf = syntheticPdf("BT /F1 12 Tf 36 250 Td (Synthetic order fulfillment) Tj ET");
+  assert.match(await extractResumeText(textPdf, "synthetic.pdf"), /Synthetic order fulfillment/);
+  assert.equal((await extractResumeText(syntheticPdf("0 0 50 50 re f"), "scanned.pdf")).trim(), "");
+  const bytes = await readFile(new URL("./fixtures/synthetic-resume.docx", import.meta.url));
+  assert.match(await extractResumeText(new Blob([bytes]), "synthetic.docx"), /Synthetic inventory experience/);
 });
 
 test("legacy DOC is available for manual review and only PDF or DOCX is automatically parsed", async () => {
@@ -183,7 +241,7 @@ test("legacy DOC is available for manual review and only PDF or DOCX is automati
 
 test("API rejects unauthenticated and malformed requests before accessing private services", async () => {
   const reply = { setHeader() {}, status(code) { this.code = code; return this; }, json(body) { this.body = body; } };
-  await handler({ method: "GET", headers: {} }, reply);
+  await handler({ method: "DELETE", headers: {} }, reply);
   assert.equal(reply.code, 405);
   await handler({ method: "POST", headers: {}, body: { action: "postings" } }, reply);
   assert.equal(reply.code, 401);
@@ -197,7 +255,10 @@ test("recruiter bridge verifies ATS membership before copying an application res
     VITE_MARKETING_DEV_SUPABASE_URL: "https://ats.example.test",
     VITE_MARKETING_DEV_SUPABASE_PUBLISHABLE_KEY: "synthetic-publishable",
     SUPABASE_SERVICE_ROLE_KEY: "synthetic-careers-server",
-    ATS_SCREENING_SERVICE_ROLE_KEY: "synthetic-ats-server"
+    ATS_SCREENING_SERVICE_ROLE_KEY: "synthetic-ats-server",
+    ATS_SCREENING_CRON_ENABLED: "true",
+    CRON_SECRET: "synthetic-screening-cron-test-secret",
+    VERCEL_ENV: "preview"
   };
   const previous = Object.fromEntries(Object.keys(settings).map(key => [key, process.env[key]]));
   Object.assign(process.env, settings);
@@ -207,8 +268,8 @@ test("recruiter bridge verifies ATS membership before copying an application res
       else process.env[key] = value;
     }
   });
-  const router = { authorized: false, copiedPath: null, linked: null };
-  const source = { id: id(30), position_id: id(10), first_name: "Synthetic", last_name: "Applicant",
+  const router = { authorized: false, copiedPath: null, linked: null, scheduler: false, finished: [] };
+  let source = { id: id(30), position_id: id(10), first_name: "Synthetic", last_name: "Applicant",
     email: "synthetic@example.test", resume_path: id(30) + "/test.pdf", screening_version_id: id(40) };
   const calls = [];
   t.mock.method(globalThis, "fetch", async (input, init) => {
@@ -220,7 +281,14 @@ test("recruiter bridge verifies ATS membership before copying an application res
       return Response.json(router.authorized ? id(1) : null);
     }
     assert.equal(authorization, url.hostname === "careers.example.test" ? "Bearer synthetic-careers-server" : "Bearer synthetic-ats-server");
-    if (url.pathname === "/rest/v1/screening_positions") return Response.json([{ job_id: id(10), published_id: id(40) }]);
+    if (url.pathname === "/rest/v1/rpc/claim_screening_sync") return Response.json(router.finished.length ? [] : [
+      { application_id: source.id, job_id: source.position_id, requisition_id: id(20), lease_id: id(90) }
+    ]);
+    if (url.pathname === "/rest/v1/rpc/finish_screening_sync") {
+      router.finished.push(JSON.parse(init.body));
+      return Response.json(null);
+    }
+    if (url.pathname === "/rest/v1/screening_positions") return Response.json([{ job_id: id(10), published_id: id(40), requisition_id: id(20) }]);
     if (url.pathname === "/rest/v1/candidate_applications") {
       assert.equal(url.searchParams.get("id"), "eq." + source.id);
       assert.equal(url.searchParams.get("position_id"), "eq." + source.position_id);
@@ -228,17 +296,23 @@ test("recruiter bridge verifies ATS membership before copying an application res
     }
     if (url.pathname === "/rest/v1/screening_versions") return Response.json([{ id: id(40), version: 1, questions: first }]);
     if (url.pathname === "/rest/v1/rpc/ats_screening_import") {
-      assert.equal(JSON.parse(init.body).p_actor, id(1));
-      return Response.json({ application_id: source.id, candidate_id: id(25), resume_path: router.copiedPath });
+      assert.equal(JSON.parse(init.body).p_actor, router.scheduler ? null : id(1));
+      return Response.json({ application_id: source.id, candidate_id: id(25), resume_path: router.duplicate ? null : router.copiedPath });
     }
     if (url.pathname === "/storage/v1/object/info/resumes/" + source.resume_path) return Response.json({ size: 10 });
     if (url.pathname === "/storage/v1/object/authenticated/resumes/" + source.resume_path ||
         url.pathname === "/storage/v1/object/resumes/" + source.resume_path) {
       return new Response("%PDF-test", { headers: { "content-type": "application/pdf" } });
     }
+    if (url.pathname === "/rest/v1/ats_screening_cases") return Response.json(router.duplicate ? [{ resume_path: router.copiedPath }] : []);
     if (url.pathname.startsWith("/storage/v1/object/ats-screening-resumes/")) {
+      if (init.method === "HEAD") {
+        assert.equal(url.pathname.split("/ats-screening-resumes/")[1], router.copiedPath);
+        return new Response(null);
+      }
+      assert.equal(router.duplicate, undefined);
       router.copiedPath = url.pathname.split("/ats-screening-resumes/")[1];
-      assert.match(router.copiedPath, new RegExp(`^${id(25)}/${source.id}-[a-f0-9]{64}[.]pdf$`));
+      assert.match(router.copiedPath, new RegExp(`^${id(25)}/[a-f0-9]{64}[.]pdf$`));
       assert.equal(new Headers(init.headers).get("x-upsert"), "false");
       return Response.json({ Key: "ats-screening-resumes/" + router.copiedPath });
     }
@@ -265,6 +339,29 @@ test("recruiter bridge verifies ATS membership before copying an application res
   await handler(req, response);
   assert.equal(response.code, 200);
   assert.ok(calls.every(path => !path.startsWith("/storage/")));
+  calls.length = 0;
+  const worker = authorization => handler({ method: "GET", headers: { authorization } }, response);
+  await worker("Bearer wrong");
+  assert.equal(response.code, 401);
+  assert.deepEqual(calls, []);
+  process.env.VERCEL_ENV = "production";
+  await worker("Bearer " + settings.CRON_SECRET);
+  assert.equal(response.code, 404);
+  assert.deepEqual(calls, []);
+  process.env.VERCEL_ENV = "preview";
+  router.scheduler = true;
+  await worker("Bearer " + settings.CRON_SECRET);
+  assert.equal(response.code, 200);
+  assert.deepEqual(response.body, { processed: 1, totals: { synced: 1 } });
+  assert.deepEqual(router.finished, [{ p_application: source.id, p_lease: id(90), p_result: "synced" }]);
+  await worker("Bearer " + settings.CRON_SECRET);
+  assert.deepEqual(response.body, { processed: 0, totals: {} });
+  router.scheduler = false;
+  router.duplicate = true;
+  source = { ...source, id: id(31), resume_path: id(31) + "/resubmission.pdf" };
+  await handler({ ...req, body: { ...req.body, applicationId: source.id } }, response);
+  assert.equal(response.code, 200);
+  assert.equal(response.body.case.resume_path, router.copiedPath);
 });
 
 test("evidence calls use job criteria and retain only source-backed experience quotes", async t => {

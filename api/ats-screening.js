@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { timingSafeEqual } from "node:crypto";
 import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
@@ -23,11 +24,11 @@ const request = z.discriminatedUnion("action", [
   z.object({ action: z.literal("configuration"), requisitionId: id }),
   z.object({ action: z.literal("questionnaire"), requisitionId: id, jobId: id, questions, publish: z.boolean() }),
   z.object({ action: z.literal("applicants"), requisitionId: id, offset: z.number().int().nonnegative().max(100000).default(0) }),
-  z.object({ action: z.literal("candidateResumes"), candidateId: id }),
+  z.object({ action: z.literal("candidateScreening"), candidateId: id }),
   z.object({ action: z.literal("sync"), ...applicationRequest, candidateId: id.optional() }),
   z.object({ action: z.literal("resume"), ...applicationRequest }),
   z.object({ action: z.literal("draft"), ...applicationRequest, generate: z.boolean().default(false) }),
-  z.object({ action: z.literal("review"), ...applicationRequest, revision: z.number().int().nonnegative(), review })
+  z.object({ action: z.literal("review"), ...applicationRequest, revision: z.number().int().nonnegative(), review, advancePipeline: z.boolean().default(false) })
 ]);
 
 const resumeTypes = {
@@ -54,19 +55,22 @@ async function query(operation) {
   return data;
 }
 
-function clients(token) {
+function clients(token, signal) {
   const careersUrl = process.env.VITE_SUPABASE_URL;
   const careersKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const atsUrl = process.env.VITE_MARKETING_DEV_SUPABASE_URL;
   const atsKey = process.env.ATS_SCREENING_SERVICE_ROLE_KEY;
   const atsPublicKey = process.env.VITE_MARKETING_DEV_SUPABASE_PUBLISHABLE_KEY;
-  if (!atsUrl || !atsKey || !atsPublicKey || !careersUrl || !careersKey) {
+  if (!atsUrl || !atsKey || (token && !atsPublicKey) || !careersUrl || !careersKey) {
     throw new ScreeningError(503, "Recruiter screening connections are not configured.");
   }
+  const options = signal ? { auth: authOptions, global: {
+    fetch: (input, init) => fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal })
+  } } : { auth: authOptions };
   return {
-    careers: createClient(careersUrl, careersKey, { auth: authOptions }),
-    ats: createClient(atsUrl, atsKey, { auth: authOptions }),
-    recruiter: createClient(atsUrl, atsPublicKey, {
+    careers: createClient(careersUrl, careersKey, options),
+    ats: createClient(atsUrl, atsKey, options),
+    recruiter: token && createClient(atsUrl, atsPublicKey, {
       auth: authOptions,
       global: { headers: { Authorization: `Bearer ${token}` } }
     })
@@ -76,12 +80,12 @@ function clients(token) {
 function applicantSnapshot(source) {
   const {
     id, first_name, last_name, email, phone, position_id, position_title, screening_answers, screening_version_id,
-    created_at, cover_letter, source: channel, employee_referral_code, utm_campaign, utm_medium, utm_content, interview_at,
+    created_at, cover_letter, source: channel, employee_referral_code, utm_campaign, utm_medium, utm_content, interview_status, interview_at,
     interview_teams_url, interview_notes, resume_path
   } = source;
   return {
     id, first_name, last_name, email, phone, position_id, position_title, screening_answers, screening_version_id,
-    created_at, cover_letter, source: channel, employee_referral_code, utm_campaign, utm_medium, utm_content, interview_at,
+    created_at, cover_letter, source: channel, employee_referral_code, utm_campaign, utm_medium, utm_content, interview_status, interview_at,
     interview_teams_url, interview_notes, resume_path
   };
 }
@@ -102,13 +106,16 @@ async function copyResume(careers, ats, source, record, actor) {
   const file = await query(sourceStorage.download(source.resume_path));
   if (invalidSize(file.size)) throw new ScreeningError(422, "The source resume exceeds the supported file size or is empty.");
   const digest = hash(Buffer.from(await file.arrayBuffer()));
-  const path = `${record.candidate_id}/${source.id}-${digest}.${extension}`;
+  const existing = await query(ats.from("ats_screening_cases").select("resume_path")
+    .eq("candidate_id", record.candidate_id).eq("resume_sha256", digest)
+    .not("resume_path", "is", null).limit(1).maybeSingle());
+  const path = existing?.resume_path ?? `${record.candidate_id}/${digest}.${extension}`;
   // The path is content-addressed. Concurrent copies and retries target the same object.
   const storage = ats.storage.from(bucket);
-  const { error } = await storage.upload(path, file, { contentType: resumeTypes[extension], upsert: false });
-  if (error) {
-    const { data: exists, error: existsError } = await storage.exists(path);
-    if (existsError || !exists) throw error;
+  const alreadyStored = existing && (await storage.exists(path)).data;
+  if (!alreadyStored) {
+    const { error } = await storage.upload(path, file, { contentType: resumeTypes[extension], upsert: false });
+    if (error && !(await storage.exists(path)).data) throw error;
   }
   return query(ats.rpc("ats_screening_record_resume", {
     p_application: source.id, p_candidate: record.candidate_id, p_actor: actor,
@@ -155,16 +162,81 @@ async function evidence(ats, record, actor, generate) {
   }
 }
 
+async function syncApplication({ careers, ats }, position, applicationId, actor, candidateId) {
+  const source = await query(careers.from("candidate_applications").select("*")
+    .eq("id", applicationId).eq("position_id", position.job_id).maybeSingle());
+  if (!source) throw new ScreeningError(404, "Application not found for this posting.");
+  const versionId = source.screening_version_id ?? position.published_id;
+  const questionnaire = versionId ? await query(careers.from("screening_versions")
+    .select("id,version,questions").eq("id", versionId).eq("job_id", position.job_id).maybeSingle()) : null;
+  const record = await query(ats.rpc("ats_screening_import", {
+    p_actor: actor, p_requisition: position.requisition_id, p_application: applicantSnapshot(source),
+    p_questionnaire: questionnaire, p_candidate: candidateId ?? null
+  }));
+  return copyResume(careers, ats, source, record, actor);
+}
+
+async function scheduledSync(req, res) {
+  const secret = process.env.CRON_SECRET;
+  if (process.env.ATS_SCREENING_CRON_ENABLED !== "true" || process.env.VERCEL_ENV === "production" || !secret || secret.length < 32) {
+    return res.status(404).json({ error: "Scheduled screening sync is disabled." });
+  }
+  const supplied = Buffer.from(req.headers.authorization ?? "");
+  const expected = Buffer.from(`Bearer ${secret}`);
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+    return res.status(401).json({ error: "Invalid scheduler authorization." });
+  }
+  const connection = clients(null, AbortSignal.timeout(45000));
+  const { careers } = connection;
+  const entries = await query(careers.rpc("claim_screening_sync", { p_limit: 8 }));
+  const results = await Promise.all(entries.map(async entry => {
+    let result;
+    try {
+      const position = await query(careers.from("screening_positions")
+        .select("job_id,requisition_id,published_id").eq("job_id", entry.job_id).maybeSingle());
+      if (position?.requisition_id !== entry.requisition_id || !position?.published_id) {
+        result = "mapping_changed";
+      } else {
+        const record = await syncApplication(connection, position, entry.application_id, null);
+        result = record.candidate_id ? "synced" : "identity_review";
+      }
+    } catch (error) {
+      result = error.status === 422 ? "manual_resume" : error.status === 404 ? "mapping_changed" : "retry";
+    }
+    await query(careers.rpc("finish_screening_sync", {
+      p_application: entry.application_id, p_lease: entry.lease_id, p_result: result
+    }));
+    return result;
+  }));
+  const totals = {};
+  for (const result of results) totals[result] = (totals[result] ?? 0) + 1;
+  return res.status(200).json({ processed: results.length, totals });
+}
+
+async function positionSummary(careers, ats, position) {
+  const applications = () => careers.from("candidate_applications").select("id", { count: "exact", head: true })
+    .eq("position_id", position.job_id);
+  const [total, assessed, resumes, reviewed] = await Promise.all([
+    applications(), applications().not("screening_answers", "is", null),
+    applications().not("resume_path", "is", null),
+    ats.from("ats_screening_cases").select("application_id", { count: "exact", head: true })
+      .eq("requisition_id", position.requisition_id).eq("review->>completed", "true")
+  ]);
+  for (const result of [total, assessed, resumes, reviewed]) if (result.error) throw result.error;
+  return { total: total.count, assessed: assessed.count, resumes: resumes.count,
+    waiting: Math.max(0, total.count - reviewed.count) };
+}
+
 async function dispatch(body, { careers, ats, recruiter }, actor) {
   if (body.action === "postings") {
     return { postings: await query(careers.from("job_postings")
       .select("id,title,description,location,hours,pay,is_active").order("title").limit(1000)) };
   }
 
-  if (body.action === "candidateResumes") {
+  if (body.action === "candidateScreening") {
     return { records: await query(ats.from("ats_screening_cases")
-      .select("application_id,requisition_id,resume_name")
-      .eq("candidate_id", body.candidateId).not("resume_path", "is", null)) };
+      .select("application_id,requisition_id,application,questionnaire,resume_name,resume_sha256")
+      .eq("candidate_id", body.candidateId).order("updated_at", { ascending: false })) };
   }
   if (body.action === "questionnaire") {
     const requisitions = await query(recruiter.rpc("ats_admin_requisitions"));
@@ -185,12 +257,16 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
     if (body.action === "configuration") return { position };
     if (!position) throw new ScreeningError(404, "Link a Careers posting in Open Positions first.");
     if (body.action === "applicants") {
-      const source = await query(careers.from("candidate_applications").select("*")
+      const [source, summary] = await Promise.all([query(careers.from("candidate_applications").select("*")
         .eq("position_id", position.job_id).order("created_at", { ascending: false }).order("id")
-        .range(body.offset, body.offset + pageSize));
+        .range(body.offset, body.offset + pageSize)), positionSummary(careers, ats, position)]);
       const page = source.slice(0, pageSize);
-      const saved = page.length ? await query(ats.from("ats_screening_cases").select("*")
-        .eq("requisition_id", body.requisitionId).in("application_id", page.map(item => item.id))) : [];
+      const applicationIds = page.map(item => item.id);
+      const [saved, syncRows] = page.length ? await Promise.all([
+        query(ats.from("ats_screening_cases").select("*").eq("requisition_id", body.requisitionId).in("application_id", applicationIds)),
+        query(careers.from("screening_sync_queue").select("application_id,state,error_code").in("application_id", applicationIds))
+      ]) : [[], []];
+      const syncStates = new Map(syncRows.map(item => [item.application_id, item]));
       const cases = new Map(saved.map(item => [item.application_id, item]));
       const versionIds = [...new Set(page.flatMap(item =>
         item.screening_version_id && !cases.has(item.id) ? [item.screening_version_id] : []))];
@@ -198,36 +274,30 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
         .select("id,version,questions").eq("job_id", position.job_id).in("id", versionIds)) : [];
       const questionnaires = new Map(versions.map(version => [version.id, version]));
       return {
+        summary,
         nextOffset: source.length > pageSize ? body.offset + pageSize : null,
         applicants: page.map(item => {
           const { resume_path, ...application } = applicantSnapshot(item);
           return {
             application, case: cases.get(item.id) ?? null, hasResume: Boolean(resume_path),
+            sync: syncStates.get(item.id) ?? null,
             questionnaire: questionnaires.get(item.screening_version_id) ?? null
           };
         })
       };
     }
 
-    const source = await query(careers.from("candidate_applications").select("*")
-      .eq("id", body.applicationId).eq("position_id", position.job_id).maybeSingle());
-    if (!source) throw new ScreeningError(404, "Application not found.");
-    const versionId = source.screening_version_id ?? position.published_id;
-    const questionnaire = versionId ? await query(careers.from("screening_versions")
-      .select("id,version,questions").eq("id", versionId).eq("job_id", position.job_id).maybeSingle()) : null;
-    const record = await query(ats.rpc("ats_screening_import", {
-      p_actor: actor, p_requisition: body.requisitionId, p_application: applicantSnapshot(source),
-      p_questionnaire: questionnaire, p_candidate: body.candidateId ?? null
-    }));
-    return { case: await copyResume(careers, ats, source, record, actor) };
+    return { case: await syncApplication({ careers, ats }, position, body.applicationId, actor, body.candidateId) };
+
   }
 
   const record = await query(ats.from("ats_screening_cases").select("*")
     .eq("application_id", body.applicationId).eq("requisition_id", body.requisitionId).maybeSingle());
   if (!record) throw new ScreeningError(404, "Sync this application first.");
   if (body.action === "review") {
-    return { case: await query(ats.rpc("ats_screening_save_review", {
-      p_actor: actor, p_application: record.application_id, p_revision: body.revision, p_review: body.review
+    return { case: await query(ats.rpc("ats_screening_save_interview_review", {
+      p_actor: actor, p_application: record.application_id, p_revision: body.revision,
+      p_review: body.review, p_advance: body.advancePipeline
     })) };
   }
   if (body.action === "draft") return evidence(ats, record, actor, body.generate);
@@ -243,8 +313,15 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
 
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
+  if (req.method === "GET") {
+    try {
+      return await scheduledSync(req, res);
+    } catch {
+      return res.status(503).json({ error: "Scheduled screening sync could not finish. Leases expire and queued work can retry." });
+    }
+  }
   if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
+    res.setHeader("Allow", "GET, POST");
     return res.status(405).json({ error: "Method not allowed." });
   }
   const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1];

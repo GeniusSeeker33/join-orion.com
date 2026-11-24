@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { screeningTemplates } from "../../src/components/screening/templates.js";
 import { id } from "../fixtures/referralDb.mjs";
 
 const job = {
@@ -60,9 +61,14 @@ test("recruiter publishes via Open Positions and saves evidence and follow-up ac
   let config = null;
   let record = null;
   let draft = null;
+  const interviews = [];
   await page.route("**/__screening_fixture", async route => {
-    const { name } = route.request().postDataJSON();
-    const data = name === "ats_admin_directory" ? { candidates: [candidate] } :
+    const { name, params } = route.request().postDataJSON();
+    if (name === "ats_admin_create_interview") {
+      expect(params).toMatchObject({ p_candidate_id: candidate.id, p_position_title: job.title, p_interview_date: "2026-12-01" });
+      interviews.push({ id: id(35), candidate_id: candidate.id, position_title: job.title, interview_date: "2026-12-01" });
+    }
+    const data = name === "ats_admin_directory" ? { candidates: [candidate], interviews } :
       name === "ats_admin_requisitions" ? { requisitions: [req], assignments: [] } : [];
     await route.fulfill({ json: { data } });
   });
@@ -76,17 +82,21 @@ test("recruiter publishes via Open Positions and saves evidence and follow-up ac
       case "questionnaire":
         config = { job_id: body.jobId, draft: body.questions, published_id: body.publish ? questionnaire.id : null };
         result = { position: config }; break;
-      case "applicants": result = { applicants: [{ application, case: record, hasResume: true, questionnaire }], nextOffset: null }; break;
+      case "applicants": result = { applicants: [{ application, case: record, hasResume: true, questionnaire }], nextOffset: null,
+          summary: { total: 1, assessed: 1, resumes: 1, waiting: record?.review?.completed ? 0 : 1 } }; break;
       case "sync":
         record = { application_id: application.id, application, candidate_id: candidate.id, resume_path: "private/path",
           questionnaire, interview: null, identity_state: "linked", revision: 0, review: {} };
         result = { case: record }; break;
+      case "candidateScreening": result = { records: [{ application_id: application.id, application, questionnaire }] }; break;
       case "draft":
         if (body.generate) draft = { experience: [{ observation: "Handled returns", quote: "Processed refunds" }],
           missing_information: [], interview_questions: ["How do you verify a discrepancy?"] };
         result = { draft }; break;
       case "review":
         expect(body.revision).toBe(record.revision);
+        expect(body.advancePipeline).toBe(true);
+        expect(body.review.meeting_url).toBe("https://teams.microsoft.com/l/meetup-join/synthetic");
         record = { ...record, revision: record.revision + 1, review: body.review };
         result = { case: record }; break;
       default: throw new Error("Unexpected action " + body.action);
@@ -111,8 +121,13 @@ test("recruiter publishes via Open Positions and saves evidence and follow-up ac
   }
   await openApplicant();
   await expect(page.getByText(questionnaire.questions[0].prompt)).toBeVisible();
+  await expect(page.getByText("Total applicants", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Sync application", exact: true }).click();
   await expect(page.getByText("Coordinated receiving and documented the refund.")).toBeVisible();
+  await page.getByText("ATS interview calendar", { exact: true }).click();
+  await page.getByLabel("Date", { exact: true }).fill("2026-12-01");
+  await page.getByRole("button", { name: "Schedule interview", exact: true }).click();
+  await expect(page.getByText("History and attendance (1)")).toBeVisible();
   await page.getByRole("button", { name: "Generate visible evidence drafts" }).click();
   await expect(page.getByText("Synthetic Applicant · Draft ready")).toBeVisible();
   await page.getByRole("button", { name: /Synthetic Applicant/ }).click();
@@ -120,6 +135,9 @@ test("recruiter publishes via Open Positions and saves evidence and follow-up ac
   await page.getByLabel("Verified resume evidence").fill("Recruiter confirmed order-resolution experience.");
   await page.getByLabel("Recruiter notes").fill("Review complete.");
   await page.getByLabel("Follow-up decision").selectOption("interview");
+  await page.getByLabel("Screening follow-up time (local)").fill("2026-12-01T10:00");
+  await page.getByLabel("Screening meeting URL (optional)").fill("https://teams.microsoft.com/l/meetup-join/synthetic");
+  await page.getByLabel(/Move this candidate’s New or Screening/).check();
   await page.getByLabel("Mark screening review complete").check();
   await page.getByRole("button", { name: "Save recruiter review" }).click();
   await expect(page.getByRole("button", { name: /Synthetic Applicant.*Review complete/ })).toBeVisible();
@@ -129,6 +147,16 @@ test("recruiter publishes via Open Positions and saves evidence and follow-up ac
   await expect(page.getByLabel("Follow-up decision")).toHaveValue("interview");
   await page.getByLabel("Review status").selectOption("pending");
   await expect(page.getByText("No applications match this page and filter.")).toBeVisible();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Recruiter administrator sign-in" })).toBeVisible();
+  await page.getByLabel("Password", { exact: true }).fill("synthetic-ats-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await openApplicant();
+  await expect(page.getByLabel("Verified resume evidence")).toHaveValue("Recruiter confirmed order-resolution experience.");
+  await page.getByRole("button", { name: "Open candidate profile and interview calendar" }).click();
+  await page.getByText("Screening applications (1)", { exact: true }).click();
+  await page.getByText(/Assessment answers · Version 1/).click();
+  await expect(page.getByText("Coordinated receiving and documented the refund.")).toBeVisible();
 });
 
 test("signed-out visitors see the existing ATS sign-in boundary", async ({ page }) => {
@@ -158,3 +186,29 @@ test("candidate pipeline, employment screens and leadership reporting remain rea
   await expect(page.getByRole("heading", { name: "Hiring progress by position" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Current recruiting funnel" })).toBeVisible();
 });
+
+for (const [index, template] of screeningTemplates.entries()) {
+  test(`applicant submits the questionnaire for ${template.title}`, async ({ page }) => {
+    const posting = { id: id(100 + index), title: template.title };
+    const version = { ...questionnaire, ...posting, id: id(110 + index), job_id: posting.id, questions: template.questions };
+    const submissions = [];
+    await page.route("**/__screening_fixture", async route => {
+      const body = route.request().postDataJSON();
+      if (body.kind === "insert") submissions.push(body.rows[0]);
+      if (body.name === "read_screening_questionnaire") expect(body.params.p_job).toBe(posting.id);
+      await route.fulfill({ json: { data: body.name === "read_screening_questionnaire" ? version : null } });
+    });
+    await page.goto("/assessment/" + posting.id);
+    await expect(page.getByRole("heading", { name: template.title, exact: true })).toBeVisible();
+    await page.getByLabel("First Name *", { exact: true }).fill("Synthetic");
+    await page.getByLabel("Last Name *", { exact: true }).fill("Applicant");
+    await page.getByLabel("Email *", { exact: true }).fill("synthetic@example.test");
+    await page.getByLabel("Phone Number *", { exact: true }).fill("812-555-0100");
+    for (const question of template.questions) await page.getByLabel(question.prompt, { exact: true }).fill("Synthetic response for " + question.id);
+    await page.getByRole("button", { name: "Apply for " + template.title, exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Application Received" })).toBeVisible();
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({ position_id: posting.id, screening_version_id: version.id });
+    expect(Object.keys(submissions[0].screening_answers)).toEqual(template.questions.map(question => question.id));
+  });
+}

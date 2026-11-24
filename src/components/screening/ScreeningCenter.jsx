@@ -2,12 +2,22 @@ import InterviewManager from "../../InterviewManager";
 import { useEffect, useState } from "react";
 import { marketingDevClient } from "../../lib/marketingDevClient";
 import { screeningRequest } from "./client";
-import { legacyReturnsQuestions } from "./templates";
+import AssessmentAnswers from "./AssessmentAnswers";
 
 const field = "w-full rounded border border-slate-600 bg-slate-800 p-2";
 const button = "rounded bg-slate-700 px-3 py-2 disabled:opacity-50";
 const primary = "rounded bg-amber-300 px-3 py-2 font-semibold text-slate-950 disabled:opacity-50";
 const assessmentState = row => row.application.screening_answers ? "Assessment submitted" : "Assessment pending";
+
+function syncStatus(row) {
+  if (row.case && !row.case.candidate_id) return "Identity review required";
+  if (row.case?.candidate_id && (!row.hasResume || row.case.resume_path)) return "Synchronized";
+  if (row.sync?.error_code === "manual_resume") return "Resume needs manual review";
+  if (row.sync?.state === "failed") return "Sync needs attention · retry manually";
+  if (row.sync?.error_code === "retry") return "Automatic retry pending";
+  if (row.sync?.state === "pending") return "Queued for sync";
+  return "Awaiting sync";
+}
 
 function localDate(value) {
   if (!value) return "";
@@ -24,6 +34,7 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
     decision: record?.review?.decision ?? "pending", completed: record?.review?.completed ?? false,
     interview_at: localDate(record?.review?.interview_at), meeting_url: record?.review?.meeting_url ?? ""
   }));
+  const [advancePipeline, setAdvancePipeline] = useState(false);
   const [draft, setDraft] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -47,7 +58,7 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
     setMessage("");
     try {
       const result = await screeningRequest(action, { ...payload, ...args });
-      if (result.case) await onChanged(result.case, action === "sync");
+      if (result.case) await onChanged(result.case, action === "sync" || args.advancePipeline);
       if (result.draft) setDraft(result.draft);
       if (result.url) window.open(result.url, "_blank", "noopener,noreferrer");
       if (success) setMessage(success);
@@ -61,7 +72,7 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
   function save(event) {
     event.preventDefault();
     run("review", {
-      revision: record.revision,
+      revision: record.revision, advancePipeline: advancePipeline && Boolean(review.interview_at),
       review: {
         ...review, meeting_url: review.meeting_url.trim() || null,
         interview_at: review.interview_at ? new Date(review.interview_at).toISOString() : null
@@ -70,8 +81,6 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
   }
 
   const questionnaire = record?.questionnaire ?? row.questionnaire;
-  const questionLabels = new Map((application.screening_version_id ? questionnaire?.questions
-    : application.screening_answers ? legacyReturnsQuestions : [])?.map(q => [q.id, q.prompt]));
   const set = (key, value) => setReview(current => ({ ...current, [key]: value }));
   const linkedCandidate = candidates.find(candidate => candidate.id === record?.candidate_id);
   const linkedInterviews = interviews.filter(item => item.candidate_id === linkedCandidate?.id);
@@ -82,7 +91,7 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
   return <article className="space-y-4 rounded-xl border border-slate-700 bg-slate-900 p-5">
     <header><h3 className="text-xl font-semibold">{application.first_name} {application.last_name}</h3>
       <p className="break-words text-sm text-slate-300">{application.email} · {application.phone}</p>
-      <p className="text-sm text-slate-400">{assessmentState(row)}{application.screening_version_id && questionnaire ? ` · Version ${questionnaire.version}` : ""}</p>
+      <p className="text-sm text-slate-400">{syncStatus(row)}</p>
     </header>
     {!record ? <button className={primary} disabled={busy} onClick={() => run("sync", {}, "Application synchronized.")}>Sync application</button> :
       record.candidate_id ? <button className="text-amber-300 underline" onClick={() => onSelectCandidate(record.candidate_id)}>Open candidate profile and interview calendar</button> :
@@ -100,13 +109,14 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
       <summary className="cursor-pointer font-semibold">Application statement</summary>
       <p className="mt-2 whitespace-pre-wrap break-words">{application.cover_letter}</p>
     </details>}
-    {application.screening_answers && <details open>
-      <summary className="cursor-pointer font-semibold">Assessment answers</summary>
-      <dl className="mt-3 grid gap-3">{Object.entries(application.screening_answers).map(([key, value]) => <div key={key}>
-        <dt className="text-sm font-semibold text-amber-200">{questionLabels.get(key) ?? key}</dt>
-        <dd className="whitespace-pre-wrap break-words">{String(value)}</dd>
-      </div>)}</dl>
-    </details>}
+    <AssessmentAnswers application={application} questionnaire={questionnaire} open />
+    {application.interview_status && <div className="space-y-1 text-sm text-slate-300">
+      <p>Imported interview status: {application.interview_status.replaceAll("_", " ")}
+        {localDate(application.interview_at) && ` · ${new Date(application.interview_at).toLocaleString()}`}</p>
+      {application.interview_teams_url?.startsWith("https://teams.microsoft.com/") && (
+        <a href={application.interview_teams_url} target="_blank" rel="noreferrer" className="text-amber-300 underline">Open imported Teams meeting</a>
+      )}
+    </div>}
     <section className="space-y-3 border-t border-slate-700 pt-3">
       <h4 className="font-semibold">Resume evidence</h4>
       {record?.resume_path ? <div className="flex flex-wrap gap-2">
@@ -137,6 +147,10 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
       </select></label>
       <label>Screening follow-up time (local)<input className={field} type="datetime-local" value={review.interview_at} onChange={event => set("interview_at", event.target.value)} /></label>
       <label>Screening meeting URL (optional)<input className={field} maxLength={1000} type="url" value={review.meeting_url} onChange={event => set("meeting_url", event.target.value)} /></label>
+      {linkedCandidate && <label className="flex gap-2"><input type="checkbox" checked={advancePipeline && Boolean(review.interview_at)}
+        disabled={!review.interview_at} onChange={event => setAdvancePipeline(event.target.checked)} />
+        Move this candidate’s New or Screening assignment to Interview when saving this time
+      </label>}
       <label className="flex gap-2"><input type="checkbox" checked={review.completed} onChange={event => set("completed", event.target.checked)} /> Mark screening review complete</label>
       <button className={primary} disabled={busy}>Save recruiter review</button>
     </form>}
@@ -166,8 +180,16 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
   const row = visible.find(item => item.application.id === selected);
 
   async function update(record, sync) {
-    setList(previous => ({ ...previous, applicants: previous.applicants.map(item =>
-      item.application.id === record.application_id ? { ...item, case: record } : item) }));
+    setList(previous => {
+      const prior = previous.applicants.find(item => item.application.id === record.application_id);
+      const delta = Number(Boolean(prior?.case?.review?.completed)) - Number(Boolean(record.review?.completed));
+      return {
+        ...previous,
+        summary: previous.summary && { ...previous.summary, waiting: Math.max(0, previous.summary.waiting + delta) },
+        applicants: previous.applicants.map(item => item.application.id === record.application_id
+          ? { ...item, case: record, application: record.application ?? item.application } : item)
+      };
+    });
     if (sync) await onRefresh();
   }
 
@@ -199,10 +221,22 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
     {error && <p role="alert" className="text-rose-300">{error}</p>}
     {!list && !error && <p role="status">Loading applications…</p>}
     {list && <>
+      {list.summary && <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {[
+          ["Total applicants", list.summary.total],
+          ["Assessments submitted", list.summary.assessed],
+          ["Assessments pending", list.summary.total - list.summary.assessed],
+          ["Awaiting review", list.summary.waiting],
+          ["Resumes attached", list.summary.resumes]
+        ].map(([label, count]) => <div key={label} className="rounded border border-slate-700 p-3">
+          <dt className="text-sm text-slate-300">{label}</dt><dd className="text-xl font-semibold">{count}</dd>
+        </div>)}
+      </dl>}
       <div className="flex flex-wrap items-end gap-3">
         <label>Review status<select className={field} value={filter} disabled={batch?.running} onChange={event => setFilter(event.target.value)}>
           <option value="all">All reviews</option><option value="pending">Pending</option><option value="complete">Completed</option>
         </select></label>
+        <p className="text-xs text-slate-400">Review filter and batch actions apply to this page.</p>
         <button className={button} disabled={batch?.running} onClick={() => setReload(value => value + 1)}>Refresh applications</button>
         <button className={button} disabled={batch?.running || !visible.length} onClick={() => runBatch("sync")}>Sync visible applications</button>
         <button className={button} disabled={batch?.running || !visible.some(item => item.case?.resume_path && item.case?.questionnaire)}
@@ -217,7 +251,7 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
             disabled={batch?.running} onClick={() => setSelected(item.application.id)}>
             <strong>{item.application.first_name} {item.application.last_name}</strong>
             <span className="block text-xs text-slate-300">{assessmentState(item)} · {item.hasResume ? "Resume available" : "No resume"}</span>
-            <span className="block text-xs text-slate-400">{item.case?.identity_state === "needs_review" ? "Identity needs review" : item.case?.review?.completed ? "Review complete" : "Review pending"}</span>
+            <span className="block text-xs text-slate-400">{item.case?.review?.completed ? "Review complete" : "Review pending"} · {syncStatus(item)}</span>
           </button>
         </li>)}
         {!visible.length && <li>No applications match this page and filter.</li>}

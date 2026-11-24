@@ -19,12 +19,27 @@ export const supabase = {
   functions: { invoke: name => request("function", { name }) }
 };
 
+const authListeners = new Set();
+const session = () => sessionStorage.getItem("synthetic-recruiter") ? {
+  access_token: "synthetic-ats-token", user: { email: "desiree@orionwholesaleonline.com" }
+} : null;
+
 export const marketingDevClient = {
   ...supabase,
   auth: {
-    getSession: async () => ({ data: { session: sessionStorage.getItem("synthetic-recruiter") ? {
-      access_token: "synthetic-ats-token", user: { email: "desiree@orionwholesaleonline.com" }
-    } : null } }),
-    onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } })
+    getSession: async () => ({ data: { session: session() } }),
+    onAuthStateChange: callback => {
+      authListeners.add(callback);
+      return { data: { subscription: { unsubscribe: () => authListeners.delete(callback) } } };
+    },
+    signOut: async () => {
+      sessionStorage.removeItem("synthetic-recruiter");
+      for (const callback of authListeners) callback("SIGNED_OUT", null);
+    },
+    signInWithPassword: async () => {
+      sessionStorage.setItem("synthetic-recruiter", "true");
+      for (const callback of authListeners) callback("SIGNED_IN", session());
+      return {};
+    }
   }
 };
