@@ -32,7 +32,7 @@ rollback;
 
 -- If the migration ledger exists, run this statement in a separate read-only transaction.
 -- select version from supabase_migrations.schema_migrations
--- where version in ('20261123000000','20261124000000','20261124010000') order by version;
+-- where version in ('20261123000000','20261123001000','20261124000000','20261124010000') order by version;
 
 -- If cron.job exists and is accessible, check for legacy automation without returning command bodies.
 -- select jobid,schedule,active,command ~* '(returns|screening|resume)' as might_sync_screening
