@@ -1,5 +1,5 @@
 {
-  "inventory": "https://github.com/GeniusSeeker33/join-orion.com/pull/16#issuecomment-7133570174",
+  "inventory": "https://github.com/GeniusSeeker33/join-orion.com/pull/16#issuecomment-7135519176",
   "existingEnvironment": {
     "careersProjectRef": "ykftchggpdkmkpkbdbgs",
     "atsProjectRef": "ofmqhrcmdrdrnvtnykyq",
@@ -12,14 +12,14 @@
   },
   "positions": [
     {
-      "position": "Customer Service & Returns Specialist \u2014 Compliance Support",
+      "position": "Customer Service & Returns Specialist — Compliance Support",
       "routing": "direct",
       "existingEnvironment": {
-        "careersPostingId": null,
+        "careersPostingId": "db38820b-3d0b-4018-a7b1-8012b53ba996",
         "atsRequisitionIds": [
           "a822e721-4d9e-439d-83c8-a1a0a41efbe6"
         ],
-        "status": "incomplete"
+        "status": "verified_title_status_pair"
       },
       "staging": {
         "careersPostingId": null,
@@ -37,7 +37,7 @@
         "atsRequisitionIds": [
           "0b3de8eb-dfff-435b-ab7a-cbf9667a3eee"
         ],
-        "status": "verified_pair"
+        "status": "verified_title_status_pair"
       },
       "staging": {
         "careersPostingId": null,
@@ -51,12 +51,12 @@
       "position": "Warehouse Picker/Packer",
       "routing": "recruiter_selects_one",
       "existingEnvironment": {
-        "careersPostingId": null,
+        "careersPostingId": "1b0ec821-b9d0-431f-8489-cc7d2af09614",
         "atsRequisitionIds": [
-          null,
-          null
+          "26e586a6-e810-48b9-b396-c3c2a1edaf34",
+          "8b0b82d8-b6b5-451f-866c-e1b81ad15384"
         ],
-        "status": "split_ids_pending"
+        "status": "verified_title_status_recruiter_routing_required"
       },
       "staging": {
         "careersPostingId": null,
@@ -75,11 +75,11 @@
       "position": "Production Assistant",
       "routing": "direct",
       "existingEnvironment": {
-        "careersPostingId": null,
+        "careersPostingId": "dbbfda40-e828-4959-bc27-686a9bbde945",
         "atsRequisitionIds": [
-          null
+          "22bfeffb-688c-4363-b887-18929ddbd7f3"
         ],
-        "status": "incomplete"
+        "status": "verified_title_status_pair"
       },
       "staging": {
         "careersPostingId": null,
@@ -93,11 +93,11 @@
       "position": "Cerakote Applicator",
       "routing": "direct",
       "existingEnvironment": {
-        "careersPostingId": null,
+        "careersPostingId": "dfc6be0b-c8c6-4db4-b108-9011ac622282",
         "atsRequisitionIds": [
-          null
+          "f5d19ed3-e62f-4a65-860f-7fa49bde9e38"
         ],
-        "status": "incomplete"
+        "status": "verified_title_status_pair"
       },
       "staging": {
         "careersPostingId": null,
@@ -111,11 +111,11 @@
       "position": "Sales Executive",
       "routing": "direct",
       "existingEnvironment": {
-        "careersPostingId": null,
+        "careersPostingId": "0e27a255-33d1-441b-8fcb-92f46e8d396a",
         "atsRequisitionIds": [
-          null
+          "349c0301-6021-4c39-b3da-d1c63e28fbf1"
         ],
-        "status": "incomplete"
+        "status": "verified_title_status_pair"
       },
       "staging": {
         "careersPostingId": null,
@@ -127,11 +127,11 @@
     }
   ],
   "verification": {
-    "status": "incomplete",
-    "baselineComment": "https://github.com/GeniusSeeker33/join-orion.com/pull/16#issuecomment-7135051198",
+    "status": "operational_metadata_verified",
+    "baselineComment": "https://github.com/GeniusSeeker33/join-orion.com/pull/16#issuecomment-7135519176",
     "careersMetadataQuery": "operational-careers-mapping.sql",
     "atsMetadataQuery": "operational-requisition-mapping.sql",
-    "note": "Warehouse Middle is the only confirmed complete operational pair. The supplied Returns requisition remains unverified for this rehearsal."
+    "note": "All six active Careers posting UUIDs and seven open ATS requisition UUIDs were verified by live metadata-only queries on 2026-11-24. These are inferred title/status matches, not approved production mappings. Warehouse Picker/Packer requires one recruiter-selected destination. Staging remains unverified; no live mappings or applications were written."
   },
   "localFixture": {
     "classification": "synthetic_only",
