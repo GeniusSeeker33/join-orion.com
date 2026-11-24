@@ -125,5 +125,16 @@
         "status": "unverified"
       }
     }
-  ]
+  ],
+  "verification": {
+    "status": "incomplete",
+    "baselineComment": "https://github.com/GeniusSeeker33/join-orion.com/pull/16#issuecomment-7135051198",
+    "careersMetadataQuery": "operational-careers-mapping.sql",
+    "atsMetadataQuery": "operational-requisition-mapping.sql",
+    "note": "Warehouse Middle is the only confirmed complete operational pair. The supplied Returns requisition remains unverified for this rehearsal."
+  },
+  "localFixture": {
+    "classification": "synthetic_only",
+    "source": "../../scripts/screening-lab/dataset.mjs"
+  }
 }

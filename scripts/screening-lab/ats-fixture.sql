@@ -31,7 +31,7 @@ begin
 end
 $$;
 create function public.ats_admin_create_interview(
-  p_candidate_id uuid,p_position_title text,p_interview_date date,p_start_time time,p_end_time time,
+  p_candidate_id uuid,p_position_title text,p_interview_date date,p_start_time text,p_end_time text,
   p_interview_format text,p_interview_stage text
 ) returns uuid language plpgsql security definer set search_path='' as $$
 declare result uuid;
@@ -40,23 +40,10 @@ begin
     raise insufficient_privilege;
   end if;
   insert into ats_dev.interviews(candidate_id,position_title,interview_date,start_time,end_time,interview_format,interview_stage)
-  values(p_candidate_id,p_position_title,p_interview_date,p_start_time,p_end_time,p_interview_format,p_interview_stage)
+  values(p_candidate_id,p_position_title,p_interview_date,nullif(p_start_time,'')::time,nullif(p_end_time,'')::time,p_interview_format,p_interview_stage)
   returning id into result;
   return result;
 end
 $$;
-create function public.screening_lab_setup(p_recruiter uuid,p_requisitions jsonb) returns void
-language sql security definer set search_path='' as $$
-  insert into ats_dev.memberships values(p_recruiter,'recruiter_admin',true);
-  insert into ats_dev.requisitions(id,title,status)
-    select id,title,'open' from jsonb_to_recordset(p_requisitions) as rows(id uuid,title text);
-$$;
-create function public.screening_lab_pipeline() returns jsonb
-language sql stable security definer set search_path='' as $$
-  select jsonb_build_object('assignments',(select jsonb_agg(a) from ats_dev.requisition_candidates a),
-    'interviews',(select jsonb_agg(i) from ats_dev.interviews i));
-$$;
-revoke all on function public.ats_admin_requisitions(),public.ats_admin_create_interview(uuid,text,date,time,time,text,text),
-  public.screening_lab_setup(uuid,jsonb),public.screening_lab_pipeline() from public,anon,authenticated;
-grant execute on function public.ats_admin_requisitions(),public.ats_admin_create_interview(uuid,text,date,time,time,text,text) to authenticated;
-grant execute on function public.screening_lab_setup(uuid,jsonb),public.screening_lab_pipeline() to service_role;
+revoke all on function public.ats_admin_requisitions(),public.ats_admin_create_interview(uuid,text,date,text,text,text,text) from public,anon,authenticated;
+grant execute on function public.ats_admin_requisitions(),public.ats_admin_create_interview(uuid,text,date,text,text,text,text) to authenticated;

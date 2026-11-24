@@ -5,11 +5,15 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
+import { compareContract } from "./contract.mjs";
 import handler from "../../api/ats-screening.js";
 import { labAtsUrl, labCareersUrl, labInferenceKey, labInferenceUrl } from "../../api/_lib/screening-environment.js";
 import { postings, requisitions } from "./dataset.mjs";
 
 const [root, run] = process.argv.slice(2);
+const contract = compareContract(JSON.parse(await readFile(join(root, "ats-contract.json"), "utf8")));
+assert.ok(!contract.blockers.some(issue => /Interview RPC signature|unavailable authenticated RPC: ats_admin_create_interview/.test(issue)),
+  "The local interview RPC must expose the reported text-time contract");
 const status = async (realm, url) => {
   const value = JSON.parse(await readFile(join(root, realm + ".status.json"), "utf8"));
   assert.equal(value.API_URL, url, "The CLI must report the expected loopback API");

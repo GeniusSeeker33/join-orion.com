@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readReviewedBaseline } from "./reviewed-baseline.mjs";
 import { postings } from "./dataset.mjs";
 
 const [root, run] = process.argv.slice(2);
 assert.match(run, /^[a-f0-9]{32}$/);
+const reviewed = await readReviewedBaseline();
+console.log(reviewed ? "Preparing approved schema-only ATS replay" : "Preparing synthetic ATS fixture replay");
 const file = path => readFile(new URL(path, import.meta.url), "utf8");
 const migration = filename => file(`../../supabase/migrations/${filename}.sql`);
 const sqlString = value => "'" + value.replaceAll("'", "''") + "'";
@@ -57,8 +60,8 @@ signing_keys_path = "./signing_keys.json"
     await migration("20261124010000_screening_sync_queue"),
     await migration("20261124020000_screening_routing")
   ] : [
-    await file("./ats-fixture.sql"), await file("../../docs/ats/ats-screening-overlay.sql"),
-    await file("../../docs/ats/ats-screening-phase2.sql")
+    reviewed ?? await file("./ats-fixture.sql"), await file("../../docs/ats/ats-screening-overlay.sql"),
+    await file("../../docs/ats/ats-screening-phase2.sql"), await file("./ats-lab-adapters.sql")
   ];
   sources.push(`create function public.screening_lab_identity() returns jsonb
 language sql immutable set search_path='' as $$

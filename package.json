@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "test:marketing": "node --test tests/marketing-domain.test.mjs tests/marketing-migration.test.mjs tests/marketing-workflow.test.mjs tests/marketing-agents.test.mjs tests/marketing-agent-api.test.mjs tests/marketing-attention.test.mjs tests/marketing-guardian-qa.test.mjs tests/marketing-guardian-consistency.test.mjs tests/marketing-orchestration.test.mjs tests/marketing-agent-work.test.mjs tests/marketing-guided-work.test.mjs",
     "test:marketing-ui": "playwright test --config tests/marketing-ui/playwright.config.mjs",
-    "test:screening": "node --test tests/screening.test.mjs",
+    "test:screening": "node --test tests/screening.test.mjs tests/screening-contract.test.mjs",
     "test:screening-ui": "playwright test --config tests/screening-ui/playwright.config.mjs",
     "test:screening-local": "bash scripts/screening-lab/run.sh"
   },

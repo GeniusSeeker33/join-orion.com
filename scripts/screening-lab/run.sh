@@ -36,7 +36,11 @@ start_stack() (
   if ! "$cli" start --workdir "$root/$realm" --network-id "$network" \
      --exclude edge-runtime,studio,postgres-meta,imgproxy,realtime,vector,logflare,mailpit >"$root/$realm.start.log" 2>&1; then
     # Do not print CLI status or environment dumps, which can include keys.
-    rg -i 'failed|error:|fatal|unhealthy' "$root/$realm.start.log" | tail -12 >&2 || true
+    if [[ "$realm" = ats && -n "${ORION_ATS_REVIEWED_SQL:-}" ]]; then
+      echo "Reviewed ATS replay failed. Inspect the approved SQL locally with the schema owner; the private CLI log is not printed." >&2
+    else
+      rg -i 'failed|error:|fatal|unhealthy' "$root/$realm.start.log" | tail -12 >&2 || true
+    fi
     exit 1
   fi
   "$cli" status --workdir "$root/$realm" --output json >"$root/$realm.status.json" 2>"$root/$realm.status.log"
@@ -58,5 +62,9 @@ failed=0
 wait "$careers_pid" || failed=1
 wait "$ats_pid" || failed=1
 if [[ "$failed" -ne 0 ]]; then exit 1; fi
+"${docker[@]}" exec -i "supabase_db_orion_lab_ats_${run:0:12}"   psql -XqAt -v ON_ERROR_STOP=1 -U postgres -d postgres   < docs/ats/ats-contract-metadata.sql > "$root/ats-contract.json"
+if [[ -n "${ORION_ATS_REVIEWED_SQL:-}" ]]; then
+  node scripts/screening-lab/contract.mjs "$root/ats-contract.json"
+fi
 # Scrub any inherited cloud URL, API key, or provider settings before running fixtures.
 env -i PATH="$PATH" node scripts/screening-lab/smoke.mjs "$root" "$run"

@@ -165,3 +165,7 @@ The Careers package uses the repository Careers setup migration, reviewed fixtur
 - The lab published six questionnaires and submitted seven synthetic applicants, including one each for Picker and Packer. It checked duplicate submissions, overlapping sync, referral attribution, unauthorized reads, signed private resume bytes, a single local inference request across repeated generation, evidence and review after re-login, and fixture interview persistence without resetting the stage.
 - The real Storage test exposed an upload MIME mismatch on downloaded DOCX files. The bridge now passes raw bytes with the validated MIME type. The fix passed the Docker lab and the HTTP regression test.
 - The production build and targeted lint passed. Repository-wide lint remained at 36 errors and five warnings. All 132 automated tests and 29 Chromium scenarios passed. A Preview build configured with the two operational refs failed at the configuration guard as expected.
+
+## Phase 5 release gate
+
+See the [ATS compatibility and release-readiness report](phase5-release-readiness.md) for the metadata-only catalog comparison, supervised private export, pinned local replay, legacy Returns comparison and rollback approvals. The current recommendation is to hold the manual-only production pilot until the maintained baseline passes, all operational mappings are verified, and a narrow non-Returns pilot is approved. The default Docker lab now uses the reported text-time interview RPC signature. The reviewed-bundle path is separate from fixture verification.
