@@ -34,6 +34,10 @@ major_version = 17
 [db.seed]
 enabled = false
 
+# The CLI consults this flag while setting up PostgreSQL, before service exclusions.
+[realtime]
+enabled = false
+
 [studio]
 enabled = false
 

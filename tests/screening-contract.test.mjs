@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +8,28 @@ import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { compareContract, interviewArguments } from "../scripts/screening-lab/contract.mjs";
 import { readReviewedBaseline } from "../scripts/screening-lab/reviewed-baseline.mjs";
+
+test("lab startup diagnostics retain fixed signals without raw database or key material", async () => {
+  const scratch = await mkdtemp(join(tmpdir(), "orion-startup-diagnostic-"));
+  try {
+    await writeFile(join(scratch, "careers.start.log"), [
+      "ReadyForQuery",
+      "Initialising schema...",
+      "Elixir.Realtime.Repo DBConnection.ConnectionError secret=synthetic-secret-marker",
+      "failed to prune volumes: a prune operation is already running",
+      "arbitrary SQL marker"
+    ].join("\n"));
+    const result = execFileSync(process.execPath,
+      ["scripts/screening-lab/startup-checks.mjs", "report", scratch, "careers Supabase initialization"],
+      { encoding: "utf8" });
+    assert.match(result, /PostgreSQL ReadyForQuery/);
+    assert.match(result, /Realtime\/PostgreSQL connection failure/);
+    assert.match(result, /another active prune/);
+    assert.doesNotMatch(result, /synthetic-secret-marker|arbitrary SQL marker/);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
 
 test("ATS catalog gate detects time signature drift, absent browser RPCs and unusable conflict keys", () => {
   const rpc = { name: "ats_admin_create_interview", arguments: interviewArguments.replaceAll("_time text", "_time time"),
