@@ -26,7 +26,7 @@ export const screeningTemplates = [
   ], "Handle customer inquiries, maintain accurate records, and coordinate returned orders with warehouse and inventory staff."),
   template("Warehouse Middle (Hybrid Maintenance)", [
     ["maintenance", "Describe your previous building or equipment maintenance work. Which tasks did you handle yourself, and which required escalation? Examples could include facility repairs, minor plumbing, landscaping or routine checks."],
-    ["warehouse", "Describe experience picking from bins, verifying labels and sealing packages. What experience do you have operating or checking a tape machine or similar packing equipment?"],
+    ["warehouse", "Describe experience picking from bins, verifying labels and sealing packages. What experience do you have operating and performing routine maintenance on a tape machine or similar packing equipment?"],
     ["priorities", "A tape machine begins jamming while orders are due, and a coworker reports a wet walkway. How would you keep people safe, prioritize the work and communicate with your team?"],
     ["accuracy", "Before shipment, you find that a carton label and the pick list disagree. What would you check, document and communicate?"],
     ["handoff", "Describe how you keep track of recurring maintenance work, such as monthly sprinkler calibration, and hand off unfinished items when you are reassigned to the warehouse."]

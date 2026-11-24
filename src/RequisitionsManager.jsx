@@ -33,7 +33,7 @@ export default function RequisitionsManager({candidates,onSelectCandidate}){
  <label className="sm:col-span-2">Hiring manager<input className={input} maxLength={150} value={form.hiring_manager} onChange={e=>set("hiring_manager",e.target.value)}/></label>
  <label className="sm:col-span-2">Internal notes<textarea className={input} maxLength={5000} rows={3} value={form.notes} onChange={e=>set("notes",e.target.value)}/></label>
  <button disabled={busy} className="sm:col-span-2 rounded bg-amber-300 p-2 font-semibold text-slate-950">Save requisition</button></form>
- {!creating&&chosen&&<QuestionnaireEditor key={chosen.id} requisitionId={chosen.id}/>}
+ {!creating&&chosen&&<QuestionnaireEditor key={chosen.id} requisitionId={chosen.id} requisitions={requisitions}/>}
  {!creating&&chosen&&<div className="mt-7 border-t border-slate-700 pt-5"><h3 className="text-lg font-semibold">Candidate pipeline ({linked.length})</h3><p className="text-sm text-slate-400 mb-3">Stage changes apply only to this requisition.</p>
  <label>Find a candidate<input className={input} placeholder="Search by name or email" value={candidateQuery} onChange={e=>{setCandidateQuery(e.target.value);setCandidateId("");}}/></label>
  <div className="flex gap-2 mt-2"><select className={input} value={candidateId} onChange={e=>setCandidateId(e.target.value)}><option value="">Select candidate</option>{filtered.map(c=><option key={c.id} value={c.id}>{c.full_name} — {c.email||"No email"}</option>)}</select><button type="button" disabled={!candidateId||busy} className="bg-amber-300 text-slate-950 rounded px-3 disabled:opacity-50" onClick={()=>assign(candidateId)}>Link</button></div>

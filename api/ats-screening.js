@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { isSplitPosting, isWarehouseSplitPair } from "../src/components/screening/routing.js";
 import { evidenceFingerprint, extractResumeText, generateEvidence, hash } from "./_lib/screening-evidence.js";
 
 const id = z.uuid();
@@ -22,10 +23,11 @@ const review = z.object({
 const request = z.discriminatedUnion("action", [
   z.object({ action: z.literal("postings") }),
   z.object({ action: z.literal("configuration"), requisitionId: id }),
-  z.object({ action: z.literal("questionnaire"), requisitionId: id, jobId: id, questions, publish: z.boolean() }),
+  z.object({ action: z.literal("questionnaire"), requisitionId: id, jobId: id, alternateRequisitionId: id.optional(), questions, publish: z.boolean() }),
   z.object({ action: z.literal("applicants"), requisitionId: id, offset: z.number().int().nonnegative().max(100000).default(0) }),
   z.object({ action: z.literal("candidateScreening"), candidateId: id }),
   z.object({ action: z.literal("sync"), ...applicationRequest, candidateId: id.optional() }),
+  z.object({ action: z.literal("route"), ...applicationRequest, destinationId: id }),
   z.object({ action: z.literal("resume"), ...applicationRequest }),
   z.object({ action: z.literal("draft"), ...applicationRequest, generate: z.boolean().default(false) }),
   z.object({ action: z.literal("review"), ...applicationRequest, revision: z.number().int().nonnegative(), review, advancePipeline: z.boolean().default(false) })
@@ -55,6 +57,19 @@ async function query(operation) {
   return data;
 }
 
+const operationalProjects = new Set(["ykftchggpdkmkpkbdbgs", "ofmqhrcmdrdrnvtnykyq"]);
+
+function verifyPreviewProjects(careersUrl, atsUrl, scheduled) {
+  if (!scheduled && process.env.VERCEL_ENV !== "preview") return;
+  const careersRef = process.env.ATS_SCREENING_STAGING_CAREERS_REF;
+  const atsRef = process.env.ATS_SCREENING_STAGING_ATS_REF;
+  const approved = (url, ref) => /^[a-z0-9]{20}$/.test(ref ?? "") && !operationalProjects.has(ref)
+    && url?.replace(/\/$/, "") === `https://${ref}.supabase.co`;
+  if (careersRef === atsRef || !approved(careersUrl, careersRef) || !approved(atsUrl, atsRef)) {
+    throw new ScreeningError(503, "Preview requires two verified isolated staging Supabase projects.");
+  }
+}
+
 function clients(token, signal) {
   const careersUrl = process.env.VITE_SUPABASE_URL;
   const careersKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -64,6 +79,7 @@ function clients(token, signal) {
   if (!atsUrl || !atsKey || (token && !atsPublicKey) || !careersUrl || !careersKey) {
     throw new ScreeningError(503, "Recruiter screening connections are not configured.");
   }
+  verifyPreviewProjects(careersUrl, atsUrl, Boolean(signal));
   const options = signal ? { auth: authOptions, global: {
     fetch: (input, init) => fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal })
   } } : { auth: authOptions };
@@ -162,15 +178,22 @@ async function evidence(ats, record, actor, generate) {
   }
 }
 
-async function syncApplication({ careers, ats }, position, applicationId, actor, candidateId) {
+async function syncApplication({ careers, ats }, position, applicationId, actor, candidateId, requisitionId = position.requisition_id) {
   const source = await query(careers.from("candidate_applications").select("*")
     .eq("id", applicationId).eq("position_id", position.job_id).maybeSingle());
   if (!source) throw new ScreeningError(404, "Application not found for this posting.");
+  if (position.requires_routing) {
+    const route = await query(careers.from("screening_application_routes").select("requisition_id")
+      .eq("application_id", applicationId).eq("job_id", position.job_id).maybeSingle());
+    if (route?.requisition_id !== requisitionId) {
+      throw new ScreeningError(409, "Choose the application's destination before syncing it from that requisition.");
+    }
+  }
   const versionId = source.screening_version_id ?? position.published_id;
   const questionnaire = versionId ? await query(careers.from("screening_versions")
     .select("id,version,questions").eq("id", versionId).eq("job_id", position.job_id).maybeSingle()) : null;
   const record = await query(ats.rpc("ats_screening_import", {
-    p_actor: actor, p_requisition: position.requisition_id, p_application: applicantSnapshot(source),
+    p_actor: actor, p_requisition: requisitionId, p_application: applicantSnapshot(source),
     p_questionnaire: questionnaire, p_candidate: candidateId ?? null
   }));
   return copyResume(careers, ats, source, record, actor);
@@ -193,11 +216,12 @@ async function scheduledSync(req, res) {
     let result;
     try {
       const position = await query(careers.from("screening_positions")
-        .select("job_id,requisition_id,published_id").eq("job_id", entry.job_id).maybeSingle());
-      if (position?.requisition_id !== entry.requisition_id || !position?.published_id) {
+        .select("job_id,requisition_id,alternate_requisition_id,published_id,requires_routing,automation_enabled").eq("job_id", entry.job_id).maybeSingle());
+      if (!position?.automation_enabled || !position.published_id ||
+        ![position.requisition_id, position.alternate_requisition_id].includes(entry.requisition_id)) {
         result = "mapping_changed";
       } else {
-        const record = await syncApplication(connection, position, entry.application_id, null);
+        const record = await syncApplication(connection, position, entry.application_id, null, undefined, entry.requisition_id);
         result = record.candidate_id ? "synced" : "identity_review";
       }
     } catch (error) {
@@ -213,20 +237,6 @@ async function scheduledSync(req, res) {
   return res.status(200).json({ processed: results.length, totals });
 }
 
-async function positionSummary(careers, ats, position) {
-  const applications = () => careers.from("candidate_applications").select("id", { count: "exact", head: true })
-    .eq("position_id", position.job_id);
-  const [total, assessed, resumes, reviewed] = await Promise.all([
-    applications(), applications().not("screening_answers", "is", null),
-    applications().not("resume_path", "is", null),
-    ats.from("ats_screening_cases").select("application_id", { count: "exact", head: true })
-      .eq("requisition_id", position.requisition_id).eq("review->>completed", "true")
-  ]);
-  for (const result of [total, assessed, resumes, reviewed]) if (result.error) throw result.error;
-  return { total: total.count, assessed: assessed.count, resumes: resumes.count,
-    waiting: Math.max(0, total.count - reviewed.count) };
-}
-
 async function dispatch(body, { careers, ats, recruiter }, actor) {
   if (body.action === "postings") {
     return { postings: await query(careers.from("job_postings")
@@ -239,27 +249,67 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
       .eq("candidate_id", body.candidateId).order("updated_at", { ascending: false })) };
   }
   if (body.action === "questionnaire") {
-    const requisitions = await query(recruiter.rpc("ats_admin_requisitions"));
+    const [requisitions, posting] = await Promise.all([
+      query(recruiter.rpc("ats_admin_requisitions")),
+      query(careers.from("job_postings").select("id,title").eq("id", body.jobId).maybeSingle())
+    ]);
+    if (!posting) throw new ScreeningError(404, "Careers posting ID was not found in this project.");
     const requisition = requisitions?.requisitions?.find(item => item.id === body.requisitionId);
     if (!requisition) throw new ScreeningError(404, "Requisition not found.");
     if (body.publish && requisition.status !== "open") {
       throw new ScreeningError(409, "Open the requisition before publishing a questionnaire.");
     }
-    return { position: await query(careers.rpc("write_screening_questionnaire", {
+    if (body.alternateRequisitionId || (isSplitPosting(posting.title) && body.publish)) {
+      const alternate = requisitions?.requisitions?.find(item => item.id === body.alternateRequisitionId);
+      if (!isSplitPosting(posting.title) || requisition.status !== "open" || alternate?.status !== "open" ||
+          !isWarehouseSplitPair(requisition.title, alternate.title)) {
+        throw new ScreeningError(409, "Select the distinct open Warehouse Picker and Warehouse Packer requisitions.");
+      }
+    }
+    return { position: await query(careers.rpc("write_screening_routing", {
       p_job: body.jobId, p_requisition: body.requisitionId, p_actor: actor,
-      p_questions: body.questions, p_publish: body.publish
+      p_questions: body.questions, p_publish: body.publish, p_alternate: body.alternateRequisitionId ?? null
     })) };
   }
 
-  if (body.action === "configuration" || body.action === "applicants" || body.action === "sync") {
+  if (body.action === "configuration" || body.action === "applicants" || body.action === "sync" || body.action === "route") {
     const position = await query(careers.from("screening_positions").select("*")
-      .eq("requisition_id", body.requisitionId).maybeSingle());
+      .or(`requisition_id.eq.${body.requisitionId},alternate_requisition_id.eq.${body.requisitionId}`).maybeSingle());
     if (body.action === "configuration") return { position };
     if (!position) throw new ScreeningError(404, "Link a Careers posting in Open Positions first.");
+    if (body.action === "route") {
+      if (!position.requires_routing || position.requisition_id !== body.requisitionId ||
+          !position.alternate_requisition_id ||
+          ![position.requisition_id, position.alternate_requisition_id].includes(body.destinationId)) {
+        throw new ScreeningError(409, "Select a configured destination from the primary routing queue.");
+      }
+      const [existing, requisitions] = await Promise.all([
+        query(ats.from("ats_screening_cases").select("job_id,requisition_id").eq("application_id", body.applicationId).maybeSingle()),
+        query(recruiter.rpc("ats_admin_requisitions"))
+      ]);
+      if (!requisitions?.requisitions?.some(item => item.id === body.destinationId && item.status === "open")) {
+        throw new ScreeningError(409, "Select a destination that is still open in the ATS.");
+      }
+      if (existing && (existing.job_id !== position.job_id || existing.requisition_id !== body.destinationId)) {
+        throw new ScreeningError(409, "An existing ATS screening case owns this application. Review its requisition before routing.");
+      }
+      const destination = await query(careers.rpc("select_screening_application_route", {
+        p_application: body.applicationId, p_job: position.job_id, p_requisition: body.destinationId, p_actor: actor
+      }));
+      return { destination };
+    }
     if (body.action === "applicants") {
-      const [source, summary] = await Promise.all([query(careers.from("candidate_applications").select("*")
-        .eq("position_id", position.job_id).order("created_at", { ascending: false }).order("id")
-        .range(body.offset, body.offset + pageSize)), positionSummary(careers, ats, position)]);
+      const [scoped, reviewed] = await Promise.all([
+        query(careers.rpc("list_routed_screening_applicants", {
+          p_job: position.job_id, p_requisition: body.requisitionId, p_offset: body.offset
+        })),
+        ats.from("ats_screening_cases").select("application_id", { count: "exact", head: true })
+          .eq("requisition_id", body.requisitionId).eq("review->>completed", "true")
+      ]);
+      if (reviewed.error) throw reviewed.error;
+      const source = scoped.applications;
+      const summary = { total: scoped.total, assessed: scoped.assessed, resumes: scoped.resumes,
+        waiting: Math.max(0, scoped.total - reviewed.count) };
       const page = source.slice(0, pageSize);
       const applicationIds = page.map(item => item.id);
       const [saved, syncRows] = page.length ? await Promise.all([
@@ -275,20 +325,22 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
       const questionnaires = new Map(versions.map(version => [version.id, version]));
       return {
         summary,
+        routing: position.requires_routing ? { primary: position.requisition_id, alternate: position.alternate_requisition_id } : null,
         nextOffset: source.length > pageSize ? body.offset + pageSize : null,
         applicants: page.map(item => {
           const { resume_path, ...application } = applicantSnapshot(item);
           return {
             application, case: cases.get(item.id) ?? null, hasResume: Boolean(resume_path),
             sync: syncStates.get(item.id) ?? null,
+            automationEnabled: position.automation_enabled,
+            needsRoute: position.requires_routing && !item.routed_requisition_id,
             questionnaire: questionnaires.get(item.screening_version_id) ?? null
           };
         })
       };
     }
 
-    return { case: await syncApplication({ careers, ats }, position, body.applicationId, actor, body.candidateId) };
-
+    return { case: await syncApplication({ careers, ats }, position, body.applicationId, actor, body.candidateId, body.requisitionId) };
   }
 
   const record = await query(ats.from("ats_screening_cases").select("*")

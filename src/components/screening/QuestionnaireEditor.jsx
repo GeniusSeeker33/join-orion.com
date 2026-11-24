@@ -1,19 +1,24 @@
 import { useEffect, useState } from "react";
 import { screeningRequest } from "./client";
+import { isSplitPosting, isWarehouseSplitPair } from "./routing";
 import { screeningTemplates } from "./templates";
 
 const field = "w-full rounded border border-slate-600 bg-slate-800 p-2";
 
-export default function QuestionnaireEditor({ requisitionId }) {
+export default function QuestionnaireEditor({ requisitionId, requisitions = [] }) {
   const [config, setConfig] = useState(null);
   const [postings, setPostings] = useState([]);
   const [jobId, setJobId] = useState("");
+  const [alternateId, setAlternateId] = useState("");
   const [questions, setQuestions] = useState([]);
   const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const posting = postings.find(job => job.id === jobId);
+  const split = config?.requires_routing || (posting && isSplitPosting(posting.title));
+  const primary = requisitions.find(item => item.id === requisitionId);
+  const alternatives = requisitions.filter(item => item.status === "open" && primary && isWarehouseSplitPair(primary.title, item.title));
   useEffect(() => {
     let live = true;
     Promise.all([screeningRequest("postings"), screeningRequest("configuration", { requisitionId })])
@@ -23,6 +28,7 @@ export default function QuestionnaireEditor({ requisitionId }) {
         setConfig(position);
         setJobId(position?.job_id ?? "");
         setQuestions(position?.draft ?? []);
+        setAlternateId(position?.alternate_requisition_id ?? "");
       })
       .catch(err => { if (live) setError(err.message); })
       .finally(() => { if (live) setBusy(false); });
@@ -36,7 +42,7 @@ export default function QuestionnaireEditor({ requisitionId }) {
     setNotice("");
     setError("");
     try {
-      const { position } = await screeningRequest("questionnaire", { requisitionId, jobId, questions, publish });
+      const { position } = await screeningRequest("questionnaire", { requisitionId, jobId, questions, publish, alternateRequisitionId: split && alternateId ? alternateId : undefined });
       setConfig(position);
       setNotice(publish ? "Questionnaire published." : "Draft saved.");
     } catch (err) {
@@ -53,6 +59,13 @@ export default function QuestionnaireEditor({ requisitionId }) {
     setQuestions([...questions, { id: `question_${number}`, prompt: "" }]);
   }
 
+  if (config?.requires_routing && config.requisition_id !== requisitionId) {
+    const anchor = requisitions.find(item => item.id === config.requisition_id);
+    return <p className="mt-4 text-sm text-slate-300">
+      This requisition uses the combined posting’s questionnaire. Edit it under {anchor?.title ?? "the primary requisition"}.
+    </p>;
+  }
+
   return <section className="mt-7 space-y-4 border-t border-slate-700 pt-5">
     <h3 className="text-lg font-semibold">Screening questionnaire</h3>
     {error && <p role="alert" className="text-rose-300">{error}</p>}
@@ -65,6 +78,14 @@ export default function QuestionnaireEditor({ requisitionId }) {
           {postings.map(job => <option key={job.id} value={job.id}>{job.title}{job.is_active ? "" : " (inactive)"}</option>)}
         </select>
       </label>
+      {split && <label>Other warehouse destination
+        <select className={field} value={alternateId} disabled={busy || Boolean(config?.published_id && config.alternate_requisition_id)}
+          onChange={event => setAlternateId(event.target.value)}>
+          <option value="">Select the other open Warehouse requisition</option>
+          {alternatives.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+        </select>
+        <span className="text-sm text-slate-300">Recruiters choose one destination per application in the primary requisition’s screening queue.</span>
+      </label>}
       {posting && <details>
         <summary className="cursor-pointer text-amber-300">Review the job description, schedule and pay</summary>
         <p className="my-2">{[posting.location, posting.hours, posting.pay].filter(Boolean).join(" · ")}</p>
@@ -90,7 +111,7 @@ export default function QuestionnaireEditor({ requisitionId }) {
         <button type="button" className="text-amber-300 underline" disabled={questions.length >= 30} onClick={addQuestion}>Add question</button>
         <button type="button" className="text-amber-300 underline" disabled={!questions.length} onClick={() => setPreview(!preview)}>{preview ? "Hide preview" : "Preview questionnaire"}</button>
         <button type="submit" value="draft" className="rounded bg-slate-700 px-3 py-2 disabled:opacity-50" disabled={busy || !questions.length}>Save draft</button>
-        <button type="submit" value="publish" className="rounded bg-amber-300 px-3 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={busy || !questions.length || !posting?.is_active}>Publish questionnaire</button>
+        <button type="submit" value="publish" className="rounded bg-amber-300 px-3 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={busy || !questions.length || !posting?.is_active || Boolean(split && !alternateId)}>Publish questionnaire</button>
       </div>}
     </form>
     {preview && <section className="rounded border border-slate-600 p-4"><h4 className="font-semibold">Applicant preview</h4>

@@ -10,10 +10,12 @@ const primary = "rounded bg-amber-300 px-3 py-2 font-semibold text-slate-950 dis
 const assessmentState = row => row.application.screening_answers ? "Assessment submitted" : "Assessment pending";
 
 function syncStatus(row) {
+  if (row.needsRoute) return "Destination needs recruiter review";
   if (row.case && !row.case.candidate_id) return "Identity review required";
   if (row.case?.candidate_id && (!row.hasResume || row.case.resume_path)) return "Synchronized";
   if (row.sync?.error_code === "manual_resume") return "Resume needs manual review";
   if (row.sync?.state === "failed") return "Sync needs attention · retry manually";
+  if (row.sync?.state === "pending" && row.automationEnabled === false) return "Awaiting manual sync";
   if (row.sync?.error_code === "retry") return "Automatic retry pending";
   if (row.sync?.state === "pending") return "Queued for sync";
   return "Awaiting sync";
@@ -26,7 +28,7 @@ function localDate(value) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-function ApplicantReview({ row, requisitionId, candidates, interviews, feedback, onChanged, onRefresh, onSelectCandidate }) {
+function ApplicantReview({ row, requisitionId, candidates, interviews, feedback, onChanged, onRefresh, onSelectCandidate, destinations, onRouted }) {
   const record = row.case;
   const application = record?.application ?? row.application;
   const [review, setReview] = useState(() => ({
@@ -39,18 +41,19 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [destinationId, setDestinationId] = useState("");
   const [candidateId, setCandidateId] = useState("");
   const [candidateQuery, setCandidateQuery] = useState("");
   const payload = { requisitionId, applicationId: application.id };
 
   useEffect(() => {
-    if (!record?.resume_path) return;
+    if (row.needsRoute || !record?.resume_path) return;
     let live = true;
     screeningRequest("draft", { requisitionId, applicationId: application.id })
       .then(result => { if (live) setDraft(result.draft); })
       .catch(err => { if (live) setError(err.message); });
     return () => { live = false; };
-  }, [requisitionId, application.id, record?.resume_path]);
+  }, [requisitionId, application.id, record?.resume_path, row.needsRoute]);
 
   async function run(action, args, success) {
     setBusy(true);
@@ -58,6 +61,7 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
     setMessage("");
     try {
       const result = await screeningRequest(action, { ...payload, ...args });
+      if (result.destination) onRouted(result.destination);
       if (result.case) await onChanged(result.case, action === "sync" || args.advancePipeline);
       if (result.draft) setDraft(result.draft);
       if (result.url) window.open(result.url, "_blank", "noopener,noreferrer");
@@ -93,7 +97,19 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
       <p className="break-words text-sm text-slate-300">{application.email} · {application.phone}</p>
       <p className="text-sm text-slate-400">{syncStatus(row)}</p>
     </header>
-    {!record ? <button className={primary} disabled={busy} onClick={() => run("sync", {}, "Application synchronized.")}>Sync application</button> :
+    {row.needsRoute ? <section className="space-y-2 rounded border border-amber-500 p-3">
+      {destinations.length < 2 ? <p>Configure both destinations for this posting in Open Positions.</p> : <>
+        <label>Application destination
+          <select className={field} value={destinationId} onChange={event => setDestinationId(event.target.value)}>
+            <option value="">Choose one requisition</option>
+            {destinations.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+          </select>
+        </label>
+        <p className="text-sm text-slate-300">This records the destination. The application appears in that requisition for sync.</p>
+        <button className={primary} disabled={busy || !destinationId}
+          onClick={() => run("route", { destinationId })}>Confirm destination</button>
+      </>}
+    </section> : !record ? <button className={primary} disabled={busy} onClick={() => run("sync", {}, "Application synchronized.")}>Sync application</button> :
       record.candidate_id ? <button className="text-amber-300 underline" onClick={() => onSelectCandidate(record.candidate_id)}>Open candidate profile and interview calendar</button> :
         <section className="space-y-2 rounded border border-amber-500 p-3">
           <p>Identity needs review. Verify the original application against the directory before linking.</p>
@@ -117,7 +133,7 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
         <a href={application.interview_teams_url} target="_blank" rel="noreferrer" className="text-amber-300 underline">Open imported Teams meeting</a>
       )}
     </div>}
-    <section className="space-y-3 border-t border-slate-700 pt-3">
+    {!row.needsRoute && <section className="space-y-3 border-t border-slate-700 pt-3">
       <h4 className="font-semibold">Resume evidence</h4>
       {record?.resume_path ? <div className="flex flex-wrap gap-2">
         <button className={button} disabled={busy} onClick={() => run("resume")}>Download private resume</button>
@@ -131,14 +147,14 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
         <p>Missing information</p><ul className="list-disc pl-5">{draft.missing_information.map((item, n) => <li key={n}>{item}</li>)}</ul>
         <p>Suggested interview questions</p><ul className="list-disc pl-5">{draft.interview_questions.map((item, n) => <li key={n}>{item}</li>)}</ul>
       </div>}
-    </section>
-    {linkedCandidate && <details>
+    </section>}
+    {!row.needsRoute && linkedCandidate && <details>
       <summary className="cursor-pointer font-semibold">ATS interview calendar</summary>
       <InterviewManager candidate={linkedCandidate} initialPosition={application.position_title}
         interviews={linkedInterviews} feedback={feedback.filter(item => linkedInterviews.some(interview => interview.id === item.interview_id))}
         onRefresh={onRefresh} />
     </details>}
-    {record && <form className="grid gap-3 border-t border-slate-700 pt-3" onSubmit={save}>
+    {!row.needsRoute && record && <form className="grid gap-3 border-t border-slate-700 pt-3" onSubmit={save}>
       <label>Verified resume evidence<textarea className={field} rows={4} maxLength={10000} value={review.approved_evidence} onChange={event => set("approved_evidence", event.target.value)} /></label>
       <label>Recruiter notes<textarea className={field} maxLength={5000} rows={3} value={review.notes} onChange={event => set("notes", event.target.value)} /></label>
       <label>Follow-up decision<select className={field} value={review.decision} onChange={event => set("decision", event.target.value)}>
@@ -159,7 +175,7 @@ function ApplicantReview({ row, requisitionId, candidates, interviews, feedback,
   </article>;
 }
 
-function PositionReview({ requisitionId, candidates, interviews, feedback, onRefresh, onSelectCandidate }) {
+function PositionReview({ requisitionId, candidates, interviews, feedback, onRefresh, onSelectCandidate, positions }) {
   const [list, setList] = useState(null);
   const [offset, setOffset] = useState(0);
   const [reload, setReload] = useState(0);
@@ -167,6 +183,7 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
   const [selected, setSelected] = useState("");
   const [error, setError] = useState("");
   const [batch, setBatch] = useState(null);
+  const [routingNotice, setRoutingNotice] = useState("");
   useEffect(() => {
     let live = true;
     screeningRequest("applicants", { requisitionId, offset })
@@ -177,6 +194,7 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
 
   const visible = (list?.applicants ?? []).filter(row => filter === "all" ||
     Boolean(row.case?.review?.completed) === (filter === "complete"));
+  const destinations = positions.filter(item => [list?.routing?.primary, list?.routing?.alternate].includes(item.id));
   const row = visible.find(item => item.application.id === selected);
 
   async function update(record, sync) {
@@ -193,10 +211,16 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
     if (sync) await onRefresh();
   }
 
+  function routeSaved(destination) {
+    setSelected("");
+    setRoutingNotice(`Destination saved · ${destinations.find(item => item.id === destination)?.title ?? "Selected requisition"}`);
+    setReload(value => value + 1);
+  }
+
   async function runBatch(action) {
-    const targets = visible.filter(item => action === "sync"
+    const targets = visible.filter(item => !item.needsRoute && (action === "sync"
       ? !item.case || (item.hasResume && item.case.candidate_id && !item.case.resume_path)
-      : item.case?.resume_path && item.case?.questionnaire);
+      : item.case?.resume_path && item.case?.questionnaire));
     const results = [];
     setBatch({ running: true, results, total: targets.length });
     for (const item of targets) {
@@ -219,6 +243,7 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
 
   return <>
     {error && <p role="alert" className="text-rose-300">{error}</p>}
+    {routingNotice && <p role="status" className="text-emerald-300">{routingNotice}</p>}
     {!list && !error && <p role="status">Loading applications…</p>}
     {list && <>
       {list.summary && <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
@@ -238,8 +263,8 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
         </select></label>
         <p className="text-xs text-slate-400">Review filter and batch actions apply to this page.</p>
         <button className={button} disabled={batch?.running} onClick={() => setReload(value => value + 1)}>Refresh applications</button>
-        <button className={button} disabled={batch?.running || !visible.length} onClick={() => runBatch("sync")}>Sync visible applications</button>
-        <button className={button} disabled={batch?.running || !visible.some(item => item.case?.resume_path && item.case?.questionnaire)}
+        <button className={button} disabled={batch?.running || !visible.some(item => !item.needsRoute)} onClick={() => runBatch("sync")}>Sync visible applications</button>
+        <button className={button} disabled={batch?.running || !visible.some(item => !item.needsRoute && item.case?.resume_path && item.case?.questionnaire)}
           onClick={() => runBatch("draft")}>Generate visible evidence drafts</button>
       </div>
       {batch && <section><p role="status">Processed {batch.results.length} of {batch.total}</p>
@@ -257,7 +282,7 @@ function PositionReview({ requisitionId, candidates, interviews, feedback, onRef
         {!visible.length && <li>No applications match this page and filter.</li>}
         </ul>
         {row && !batch?.running && <ApplicantReview key={`${row.application.id}:${row.case?.revision ?? "unsynced"}:${row.case?.candidate_id ?? ""}`}
-          row={row} requisitionId={requisitionId} candidates={candidates} interviews={interviews} feedback={feedback} onChanged={update} onRefresh={onRefresh} onSelectCandidate={onSelectCandidate} />}
+          row={row} destinations={destinations} onRouted={routeSaved} requisitionId={requisitionId} candidates={candidates} interviews={interviews} feedback={feedback} onChanged={update} onRefresh={onRefresh} onSelectCandidate={onSelectCandidate} />}
       </div>
       <div className="flex gap-3">
         {offset > 0 && <button className={button} disabled={batch?.running} onClick={() => { setList(null); setSelected(""); setOffset(value => Math.max(0, value - 30)); }}>Previous page</button>}
@@ -287,6 +312,6 @@ export default function ScreeningCenter({ candidates, interviews, feedback, onRe
       <option value="">Select a requisition</option>
       {positions.map(position => <option key={position.id} value={position.id}>{position.title} · {position.status}</option>)}
     </select></label>
-    {selected && <PositionReview key={selected} requisitionId={selected} candidates={candidates} interviews={interviews} feedback={feedback} onRefresh={onRefresh} onSelectCandidate={onSelectCandidate} />}
+    {selected && <PositionReview key={selected} requisitionId={selected} positions={positions} candidates={candidates} interviews={interviews} feedback={feedback} onRefresh={onRefresh} onSelectCandidate={onSelectCandidate} />}
   </section>;
 }

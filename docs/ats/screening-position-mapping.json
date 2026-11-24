@@ -1,12 +1,129 @@
 {
-  "status": "unverified",
-  "note": "The IDs supplied in the brief are existing-environment hints. Verify against the two staging projects before use. Null means no authoritative ID was supplied.",
+  "inventory": "https://github.com/GeniusSeeker33/join-orion.com/pull/16#issuecomment-7133570174",
+  "existingEnvironment": {
+    "careersProjectRef": "ykftchggpdkmkpkbdbgs",
+    "atsProjectRef": "ofmqhrcmdrdrnvtnykyq",
+    "classification": "operational"
+  },
+  "staging": {
+    "careersProjectRef": null,
+    "atsProjectRef": null,
+    "classification": "unverified"
+  },
   "positions": [
-    { "position": "Customer Service & Returns Specialist — Compliance Support", "careersPostingId": null, "atsRequisitionId": "a822e721-4d9e-439d-83c8-a1a0a41efbe6" },
-    { "position": "Warehouse Middle (Hybrid Maintenance)", "careersPostingId": "6702d7a6-3c34-4b13-9fba-d86b67b419ec", "atsRequisitionId": "0b3de8eb-dfff-435b-ab7a-cbf9667a3eee" },
-    { "position": "Warehouse Picker/Packer", "careersPostingId": null, "atsRequisitionId": null },
-    { "position": "Production Assistant", "careersPostingId": null, "atsRequisitionId": null },
-    { "position": "Cerakote Applicator", "careersPostingId": null, "atsRequisitionId": null },
-    { "position": "Sales Executive", "careersPostingId": null, "atsRequisitionId": null }
+    {
+      "position": "Customer Service & Returns Specialist \u2014 Compliance Support",
+      "routing": "direct",
+      "existingEnvironment": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          "a822e721-4d9e-439d-83c8-a1a0a41efbe6"
+        ],
+        "status": "incomplete"
+      },
+      "staging": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          null
+        ],
+        "status": "unverified"
+      }
+    },
+    {
+      "position": "Warehouse Middle (Hybrid Maintenance)",
+      "routing": "direct",
+      "existingEnvironment": {
+        "careersPostingId": "6702d7a6-3c34-4b93-9fba-d86b67b419ec",
+        "atsRequisitionIds": [
+          "0b3de8eb-dfff-435b-ab7a-cbf9667a3eee"
+        ],
+        "status": "verified_pair"
+      },
+      "staging": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          null
+        ],
+        "status": "unverified"
+      }
+    },
+    {
+      "position": "Warehouse Picker/Packer",
+      "routing": "recruiter_selects_one",
+      "existingEnvironment": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          null,
+          null
+        ],
+        "status": "split_ids_pending"
+      },
+      "staging": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          null,
+          null
+        ],
+        "status": "unverified"
+      },
+      "requisitionTitleOrder": [
+        "Warehouse Picker",
+        "Warehouse Packer"
+      ]
+    },
+    {
+      "position": "Production Assistant",
+      "routing": "direct",
+      "existingEnvironment": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          null
+        ],
+        "status": "incomplete"
+      },
+      "staging": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          null
+        ],
+        "status": "unverified"
+      }
+    },
+    {
+      "position": "Cerakote Applicator",
+      "routing": "direct",
+      "existingEnvironment": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          null
+        ],
+        "status": "incomplete"
+      },
+      "staging": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          null
+        ],
+        "status": "unverified"
+      }
+    },
+    {
+      "position": "Sales Executive",
+      "routing": "direct",
+      "existingEnvironment": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          null
+        ],
+        "status": "incomplete"
+      },
+      "staging": {
+        "careersPostingId": null,
+        "atsRequisitionIds": [
+          null
+        ],
+        "status": "unverified"
+      }
+    }
   ]
 }

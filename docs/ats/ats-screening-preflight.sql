@@ -20,7 +20,7 @@ rollback;
 -- select r.id,r.title,r.status,count(a.candidate_id) as assignments
 -- from ats_dev.requisitions r left join ats_dev.requisition_candidates a on a.requisition_id=r.id
 -- where r.id in ('0b3de8eb-dfff-435b-ab7a-cbf9667a3eee','a822e721-4d9e-439d-83c8-a1a0a41efbe6')
---   or r.title ~* '(customer service|warehouse middle|picker/packer|production assistant|cerakote applicator|sales executive)'
+--   or r.title ~* '(customer service|warehouse middle|warehouse picker|warehouse packer|production assistant|cerakote applicator|sales executive)'
 -- group by r.id,r.title,r.status order by r.title,r.status,r.id;
 -- select count(*) from ats_dev.memberships where is_active and role='recruiter_admin';
 -- rollback;

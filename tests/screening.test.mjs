@@ -147,6 +147,8 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
     await assert.rejects(sync(source(id(30)), null, id(2)), /insufficient_privilege/);
     assert.equal((await sync(source(id(30)))).candidate_id, id(25));
     assert.equal((await sync(source(id(30)))).candidate_id, id(25));
+    await assert.rejects(db.query("select ats_screening_import($1,$2,$3,null,null)",
+      [id(1), id(21), JSON.stringify(source(id(30)))]), /already belongs to another requisition/);
     assert.equal((await sync(source(id(33)), null, null)).candidate_id, id(25));
     const ambiguous = source(id(31), { first_name: "Different" });
     assert.equal((await sync(ambiguous)).identity_state, "needs_review");
@@ -251,12 +253,14 @@ test("API rejects unauthenticated and malformed requests before accessing privat
 
 test("recruiter bridge verifies ATS membership before copying an application resume into private storage", async t => {
   const settings = {
-    VITE_SUPABASE_URL: "https://careers.example.test",
-    VITE_MARKETING_DEV_SUPABASE_URL: "https://ats.example.test",
+    VITE_SUPABASE_URL: "https://testcareersstagingaa.supabase.co",
+    VITE_MARKETING_DEV_SUPABASE_URL: "https://testatstagingaaaaaaa.supabase.co",
     VITE_MARKETING_DEV_SUPABASE_PUBLISHABLE_KEY: "synthetic-publishable",
     SUPABASE_SERVICE_ROLE_KEY: "synthetic-careers-server",
     ATS_SCREENING_SERVICE_ROLE_KEY: "synthetic-ats-server",
     ATS_SCREENING_CRON_ENABLED: "true",
+    ATS_SCREENING_STAGING_CAREERS_REF: "testcareersstagingaa",
+    ATS_SCREENING_STAGING_ATS_REF: "testatstagingaaaaaaa",
     CRON_SECRET: "synthetic-screening-cron-test-secret",
     VERCEL_ENV: "preview"
   };
@@ -280,7 +284,7 @@ test("recruiter bridge verifies ATS membership before copying an application res
       assert.equal(authorization, "Bearer synthetic-ats-session");
       return Response.json(router.authorized ? id(1) : null);
     }
-    assert.equal(authorization, url.hostname === "careers.example.test" ? "Bearer synthetic-careers-server" : "Bearer synthetic-ats-server");
+    if (url.pathname !== "/rest/v1/rpc/ats_admin_requisitions") assert.equal(authorization, url.hostname === "testcareersstagingaa.supabase.co" ? "Bearer synthetic-careers-server" : "Bearer synthetic-ats-server");
     if (url.pathname === "/rest/v1/rpc/claim_screening_sync") return Response.json(router.finished.length ? [] : [
       { application_id: source.id, job_id: source.position_id, requisition_id: id(20), lease_id: id(90) }
     ]);
@@ -288,7 +292,18 @@ test("recruiter bridge verifies ATS membership before copying an application res
       router.finished.push(JSON.parse(init.body));
       return Response.json(null);
     }
-    if (url.pathname === "/rest/v1/screening_positions") return Response.json([{ job_id: id(10), published_id: id(40), requisition_id: id(20) }]);
+    if (url.pathname === "/rest/v1/screening_positions") return Response.json([{
+      job_id: id(10), published_id: id(40), requisition_id: id(20), automation_enabled: true,
+      requires_routing: Boolean(router.split), alternate_requisition_id: router.split ? id(21) : null
+    }]);
+    if (url.pathname === "/rest/v1/screening_application_routes") {
+      return Response.json(router.destination ? [{ requisition_id: router.destination }] : []);
+    }
+    if (url.pathname === "/rest/v1/job_postings") return Response.json([]);
+    if (url.pathname === "/rest/v1/rpc/ats_admin_requisitions") {
+      assert.equal(authorization, "Bearer synthetic-ats-session");
+      return Response.json({ requisitions: [] });
+    }
     if (url.pathname === "/rest/v1/candidate_applications") {
       assert.equal(url.searchParams.get("id"), "eq." + source.id);
       assert.equal(url.searchParams.get("position_id"), "eq." + source.position_id);
@@ -349,6 +364,13 @@ test("recruiter bridge verifies ATS membership before copying an application res
   assert.equal(response.code, 404);
   assert.deepEqual(calls, []);
   process.env.VERCEL_ENV = "preview";
+  process.env.VITE_SUPABASE_URL = "https://ykftchggpdkmkpkbdbgs.supabase.co";
+  process.env.ATS_SCREENING_STAGING_CAREERS_REF = "ykftchggpdkmkpkbdbgs";
+  await worker("Bearer " + settings.CRON_SECRET);
+  assert.equal(response.code, 503);
+  assert.deepEqual(calls, []);
+  process.env.VITE_SUPABASE_URL = settings.VITE_SUPABASE_URL;
+  process.env.ATS_SCREENING_STAGING_CAREERS_REF = settings.ATS_SCREENING_STAGING_CAREERS_REF;
   router.scheduler = true;
   await worker("Bearer " + settings.CRON_SECRET);
   assert.equal(response.code, 200);
@@ -362,6 +384,20 @@ test("recruiter bridge verifies ATS membership before copying an application res
   await handler({ ...req, body: { ...req.body, applicationId: source.id } }, response);
   assert.equal(response.code, 200);
   assert.equal(response.body.case.resume_path, router.copiedPath);
+  router.split = true;
+  calls.length = 0;
+  const combined = { ...req, body: { ...req.body, applicationId: source.id } };
+  await handler(combined, response);
+  assert.equal(response.code, 409);
+  assert.ok(!calls.includes("/rest/v1/rpc/ats_screening_import"));
+  router.destination = id(21);
+  await handler(combined, response);
+  assert.equal(response.code, 409);
+  assert.ok(!calls.includes("/rest/v1/rpc/ats_screening_import"));
+  await handler({ ...req, body: { action: "questionnaire", jobId: "6702d7a6-3c34-4b13-9fba-d86b67b419ec",
+    requisitionId: id(20), questions: first, publish: true } }, response);
+  assert.equal(response.code, 404);
+  assert.ok(!calls.includes("/rest/v1/rpc/write_screening_routing"));
 });
 
 test("evidence calls use job criteria and retain only source-backed experience quotes", async t => {
@@ -397,4 +433,65 @@ test("evidence calls use job criteria and retain only source-backed experience q
   assert.deepEqual(draft.experience, [{ observation: "Handled orders", quote: "Entered orders" }]);
   assert.equal(draft.interview_questions.length, 1);
   assert.equal(called, 1);
+});
+
+test("combined postings wait for one immutable route and the worker skips unapproved mappings", async () => {
+  const db = await createReferralDb();
+  try {
+    await db.exec(`reset role; create role service_role bypassrls;
+      alter table job_postings add column created_at timestamptz default now(), add column hours text,
+        add column pay text, add column location text, add column description text;
+      alter table candidate_applications add column resume_path text, add column phone text, add column created_at timestamptz default now();
+      update job_postings set title='Warehouse Picker/Packer' where id='${id(10)}';`);
+    for (const filename of [
+      "20261124000000_screening_questionnaires.sql", "20261124010000_screening_sync_queue.sql",
+      "20261124020000_screening_routing.sql"
+    ]) await db.exec(await migration("supabase/migrations/" + filename));
+    const write = (job, req, alternate) => db.query("select write_screening_routing($1,$2,$3,$4,true,$5)",
+      [job, req, JSON.stringify(first), id(1), alternate]);
+    const choose = (app, job, req) => db.query("select select_screening_application_route($1,$2,$3,$4)",
+      [app, job, req, id(1)]);
+    const list = async req => (await db.query("select list_routed_screening_applicants($1,$2,0) result", [id(10), req])).rows[0].result;
+    const claim = async () => (await db.query("select * from claim_screening_sync(8)")).rows;
+    await db.exec("set role service_role");
+    await assert.rejects(write(id(99), id(20), id(21)), /Invalid posting/);
+    await assert.rejects(write(id(10), id(20), null), /distinct destinations/);
+    await assert.rejects(write(id(10), id(20), id(20)), /Invalid posting/);
+    await write(id(10), id(20), id(21));
+    await assert.rejects(write(id(11), id(21), null), /only one posting/);
+    await write(id(11), id(22), null);
+    await db.exec("reset role");
+    for (const [app, job] of [[30, 10], [31, 11]]) {
+      await db.query(`insert into candidate_applications(id,first_name,last_name,email,position_id,position_title,status)
+        values($1,'Synthetic','Applicant',$2,$3,'Test','new')`, [id(app), `app${app}@example.test`, id(job)]);
+    }
+    await asUser(db, null);
+    await assert.rejects(choose(id(30), id(10), id(21)), /permission denied/);
+    await db.exec("reset role; set role service_role");
+    assert.equal((await list(id(20))).total, 1);
+    assert.equal((await list(id(21))).total, 0);
+    assert.deepEqual(await claim(), []);
+    await db.exec("reset role");
+    await db.query("update screening_positions set automation_enabled=true where job_id=$1", [id(10)]);
+    await db.exec("set role service_role");
+    assert.deepEqual(await claim(), []);
+    await assert.rejects(choose(id(30), id(11), id(22)), /Unverified/);
+    await assert.rejects(choose(id(30), id(10), id(22)), /Unverified/);
+    await choose(id(30), id(10), id(21));
+    await choose(id(30), id(10), id(21));
+    await assert.rejects(choose(id(30), id(10), id(20)), /already has a destination/);
+    assert.equal((await list(id(20))).total, 0);
+    assert.equal((await list(id(21))).applications[0].routed_requisition_id, id(21));
+    const [leased] = await claim();
+    assert.equal(leased.requisition_id, id(21));
+    assert.deepEqual(await claim(), []);
+    await db.query("select finish_screening_sync($1,$2,'synced')", [leased.application_id, leased.lease_id]);
+    assert.deepEqual(await claim(), []);
+    const manifest = JSON.parse(await migration("docs/ats/screening-position-mapping.json"));
+    const warehouse = manifest.positions.find(item => item.position.startsWith("Warehouse Middle"));
+    assert.equal(warehouse.existingEnvironment.careersPostingId, "6702d7a6-3c34-4b93-9fba-d86b67b419ec");
+    assert.ok(manifest.positions.every(item => item.staging.careersPostingId === null));
+  } finally {
+    await db.close();
+  }
 });

@@ -212,3 +212,74 @@ for (const [index, template] of screeningTemplates.entries()) {
     expect(Object.keys(submissions[0].screening_answers)).toEqual(template.questions.map(question => question.id));
   });
 }
+
+test("combined Warehouse applications appear in one destination only after recruiter routing", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("synthetic-recruiter", "true"));
+  const picker = { ...req, title: "Warehouse Picker" };
+  const packer = { ...req, id: id(21), title: "Warehouse Packer" };
+  const combined = { ...job, title: "Warehouse Picker/Packer" };
+  let destination;
+  let published;
+  let syncCount = 0;
+  await page.route("**/__screening_fixture", async route => {
+    const { name } = route.request().postDataJSON();
+    await route.fulfill({ json: { data: name === "ats_admin_requisitions" ? { requisitions: [picker, packer], assignments: [] }
+      : { candidates: [candidate] } } });
+  });
+  await page.route("**/api/ats-screening", async route => {
+    const body = route.request().postDataJSON();
+    const config = { job_id: combined.id, requisition_id: picker.id, alternate_requisition_id: packer.id,
+      requires_routing: true, published_id: questionnaire.id };
+    let result;
+    if (body.action === "postings") result = { postings: [combined] };
+    if (body.action === "configuration") result = { position: published ? config : null };
+    if (body.action === "questionnaire") {
+      expect(body.alternateRequisitionId).toBe(packer.id);
+      published = true;
+      result = { position: config };
+    }
+    if (body.action === "applicants") {
+      result = { routing: { primary: picker.id, alternate: packer.id }, nextOffset: null,
+        applicants: body.requisitionId === (destination ?? picker.id)
+          ? [{ application: { ...application, position_title: combined.title }, questionnaire, needsRoute: !destination }] : [] };
+    }
+    if (body.action === "route") {
+      expect(body.requisitionId).toBe(picker.id);
+      expect(body.destinationId).toBe(packer.id);
+      destination = body.destinationId;
+      result = { destination };
+    }
+    if (body.action === "sync") {
+      expect(body.requisitionId).toBe(packer.id);
+      syncCount++;
+      result = { case: { application_id: application.id, candidate_id: candidate.id, application, revision: 0 } };
+    }
+    if (!result) throw new Error("Unexpected action " + body.action);
+    await route.fulfill({ json: result });
+  });
+  await page.goto("/ats");
+  await page.getByRole("button", { name: "Open Positions", exact: true }).click();
+  await page.getByRole("button", { name: /Warehouse Picker/ }).click();
+  await page.getByLabel("Careers posting").selectOption(combined.id);
+  await page.getByLabel("Start from a role template").selectOption("2");
+  await expect(page.getByRole("button", { name: "Publish questionnaire" })).toBeDisabled();
+  await page.getByLabel("Other warehouse destination").selectOption(packer.id);
+  await page.getByRole("button", { name: "Publish questionnaire" }).click();
+  await expect(page.getByText("Questionnaire published.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Applicant Screening", exact: true }).click();
+  const selector = page.getByRole("combobox", { name: "Position", exact: true });
+  await selector.selectOption(picker.id);
+  await page.getByRole("button", { name: /Synthetic Applicant/ }).click();
+  await expect(page.getByRole("button", { name: "Sync application", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Sync visible applications" })).toBeDisabled();
+  await page.getByLabel("Application destination").selectOption(packer.id);
+  await page.getByRole("button", { name: "Confirm destination" }).click();
+  await expect(page.getByText("Destination saved · Warehouse Packer")).toBeVisible();
+  await expect(page.getByText("No applications match this page and filter.")).toBeVisible();
+  await selector.selectOption(packer.id);
+  await page.getByRole("button", { name: /Synthetic Applicant/ }).click();
+  await page.getByRole("button", { name: "Sync application", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Open candidate profile and interview calendar" })).toBeVisible();
+  expect(syncCount).toBe(1);
+});
