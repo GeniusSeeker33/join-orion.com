@@ -4,6 +4,7 @@ import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { isSplitPosting, isWarehouseSplitPair } from "../src/components/screening/routing.js";
+import { screeningIsolationError, screeningLabIdentityError } from "./_lib/screening-environment.js";
 import { evidenceFingerprint, extractResumeText, generateEvidence, hash } from "./_lib/screening-evidence.js";
 
 const id = z.uuid();
@@ -57,19 +58,6 @@ async function query(operation) {
   return data;
 }
 
-const operationalProjects = new Set(["ykftchggpdkmkpkbdbgs", "ofmqhrcmdrdrnvtnykyq"]);
-
-function verifyPreviewProjects(careersUrl, atsUrl, scheduled) {
-  if (!scheduled && process.env.VERCEL_ENV !== "preview") return;
-  const careersRef = process.env.ATS_SCREENING_STAGING_CAREERS_REF;
-  const atsRef = process.env.ATS_SCREENING_STAGING_ATS_REF;
-  const approved = (url, ref) => /^[a-z0-9]{20}$/.test(ref ?? "") && !operationalProjects.has(ref)
-    && url?.replace(/\/$/, "") === `https://${ref}.supabase.co`;
-  if (careersRef === atsRef || !approved(careersUrl, careersRef) || !approved(atsUrl, atsRef)) {
-    throw new ScreeningError(503, "Preview requires two verified isolated staging Supabase projects.");
-  }
-}
-
 function clients(token, signal) {
   const careersUrl = process.env.VITE_SUPABASE_URL;
   const careersKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -79,16 +67,24 @@ function clients(token, signal) {
   if (!atsUrl || !atsKey || (token && !atsPublicKey) || !careersUrl || !careersKey) {
     throw new ScreeningError(503, "Recruiter screening connections are not configured.");
   }
-  verifyPreviewProjects(careersUrl, atsUrl, Boolean(signal));
-  const options = signal ? { auth: authOptions, global: {
-    fetch: (input, init) => fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal })
-  } } : { auth: authOptions };
+  const isolationError = screeningIsolationError(process.env, Boolean(signal));
+  if (isolationError) throw new ScreeningError(503, isolationError);
+  const local = process.env.ATS_SCREENING_LOCAL_MODE === "true";
+  const options = { auth: authOptions, global: {
+    ...(local || signal ? {
+      fetch: (input, init) => fetch(input, {
+        ...init,
+        signal: signal && init?.signal ? AbortSignal.any([signal, init.signal]) : signal ?? init?.signal,
+        redirect: local ? "error" : init?.redirect
+      })
+    } : {})
+  } };
   return {
     careers: createClient(careersUrl, careersKey, options),
     ats: createClient(atsUrl, atsKey, options),
     recruiter: token && createClient(atsUrl, atsPublicKey, {
-      auth: authOptions,
-      global: { headers: { Authorization: `Bearer ${token}` } }
+      ...options,
+      global: { ...options.global, headers: { Authorization: `Bearer ${token}` } }
     })
   };
 }
@@ -121,7 +117,8 @@ async function copyResume(careers, ats, source, record, actor) {
   if (invalidSize(size)) throw new ScreeningError(422, "The source resume exceeds the supported file size or is empty.");
   const file = await query(sourceStorage.download(source.resume_path));
   if (invalidSize(file.size)) throw new ScreeningError(422, "The source resume exceeds the supported file size or is empty.");
-  const digest = hash(Buffer.from(await file.arrayBuffer()));
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const digest = hash(bytes);
   const existing = await query(ats.from("ats_screening_cases").select("resume_path")
     .eq("candidate_id", record.candidate_id).eq("resume_sha256", digest)
     .not("resume_path", "is", null).limit(1).maybeSingle());
@@ -130,7 +127,8 @@ async function copyResume(careers, ats, source, record, actor) {
   const storage = ats.storage.from(bucket);
   const alreadyStored = existing && (await storage.exists(path)).data;
   if (!alreadyStored) {
-    const { error } = await storage.upload(path, file, { contentType: resumeTypes[extension], upsert: false });
+    // Raw bytes let the SDK use the validated MIME type instead of the downloaded Blob type.
+    const { error } = await storage.upload(path, bytes, { contentType: resumeTypes[extension], upsert: false });
     if (error && !(await storage.exists(path)).data) throw error;
   }
   return query(ats.rpc("ats_screening_record_resume", {
@@ -382,6 +380,8 @@ export default async function handler(req, res) {
   if (!result.success) return res.status(400).json({ error: "Invalid screening request." });
   try {
     const connection = clients(token);
+    const labError = await screeningLabIdentityError(process.env);
+    if (labError) throw new ScreeningError(503, labError);
     const { data, error } = await connection.recruiter.rpc("ats_screening_authorize");
     if (error || !data) return res.status(403).json({ error: "Recruiter administrator access required." });
     return res.status(200).json(await dispatch(result.data, connection, data));

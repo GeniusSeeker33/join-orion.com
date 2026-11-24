@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { extractResumeText, evidenceFingerprint, generateEvidence } from "../api/_lib/screening-evidence.js";
+import { screeningIsolationError, labAtsUrl, labCareersUrl, labInferenceKey, labInferenceUrl } from "../api/_lib/screening-environment.js";
 import handler from "../api/ats-screening.js";
 import { screeningTemplates } from "../src/components/screening/templates.js";
 import { asUser, createReferralDb, id, seedEmployee } from "./fixtures/referralDb.mjs";
@@ -329,6 +330,8 @@ test("recruiter bridge verifies ATS membership before copying an application res
       router.copiedPath = url.pathname.split("/ats-screening-resumes/")[1];
       assert.match(router.copiedPath, new RegExp(`^${id(25)}/[a-f0-9]{64}[.]pdf$`));
       assert.equal(new Headers(init.headers).get("x-upsert"), "false");
+      assert.equal(new Headers(init.headers).get("content-type"), "application/pdf");
+      assert.equal(Buffer.from(init.body).toString(), "%PDF-test");
       return Response.json({ Key: "ats-screening-resumes/" + router.copiedPath });
     }
     if (url.pathname === "/rest/v1/rpc/ats_screening_record_resume") {
@@ -494,4 +497,29 @@ test("combined postings wait for one immutable route and the worker skips unappr
   } finally {
     await db.close();
   }
+});
+
+test("isolated screening configuration rejects live refs, swapped lab ports and nonfixture inference", () => {
+  const careersRef = "testcareersstagingaa";
+  const atsRef = "testatstagingaaaaaaa";
+  const preview = { VERCEL_ENV: "preview", ATS_SCREENING_STAGING_CAREERS_REF: careersRef,
+    ATS_SCREENING_STAGING_ATS_REF: atsRef, VITE_SUPABASE_URL: `https://${careersRef}.supabase.co`,
+    VITE_MARKETING_DEV_SUPABASE_URL: `https://${atsRef}.supabase.co` };
+  assert.equal(screeningIsolationError(preview), null);
+  for (const ref of ["ykftchggpdkmkpkbdbgs", "ofmqhrcmdrdrnvtnykyq"]) {
+    assert.ok(screeningIsolationError({ ...preview, ATS_SCREENING_STAGING_CAREERS_REF: ref,
+      VITE_SUPABASE_URL: `https://${ref}.supabase.co` }));
+  }
+  assert.ok(screeningIsolationError({ VERCEL: "1" }));
+  const lab = { ATS_SCREENING_LOCAL_MODE: "true", ATS_SCREENING_LAB_RUN: "a".repeat(32),
+    VITE_SUPABASE_URL: labCareersUrl, VITE_MARKETING_DEV_SUPABASE_URL: labAtsUrl,
+    OPENAI_API_KEY: labInferenceKey, OPENAI_BASE_URL: labInferenceUrl };
+  assert.equal(screeningIsolationError(lab), null);
+  assert.ok(screeningIsolationError({ ...lab, VITE_SUPABASE_URL: labAtsUrl }));
+  assert.ok(screeningIsolationError({ ...lab, OPENAI_BASE_URL: "https://api.openai.com/v1" }));
+  assert.ok(screeningIsolationError({ ...lab, OPENAI_API_KEY: "nonfixture" }));
+  assert.ok(screeningIsolationError({ ...lab, VERCEL_ENV: "preview" }));
+  assert.ok(screeningIsolationError({ ...lab, ATS_SCREENING_LOCAL_MODE: "false" }));
+  assert.ok(screeningIsolationError({ ...lab, ATS_SCREENING_CRON_ENABLED: "true" }));
+  assert.ok(screeningIsolationError(lab, true));
 });
