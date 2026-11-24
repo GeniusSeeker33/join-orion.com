@@ -1,0 +1,137 @@
+import { expect, test } from "@playwright/test";
+import { id } from "../fixtures/referralDb.mjs";
+
+const job = {
+  id: id(10), title: "Customer Service & Returns Specialist — Compliance Support",
+  department: "Operations", is_active: true, hours: "40 hours/week", pay: "$21/hour",
+  description: "Handle return requests, create carrier labels and coordinate receiving."
+};
+const req = { id: id(20), title: job.title, department: "Operations", status: "open", openings: 1 };
+const questionnaire = {
+  id: id(40), job_id: job.id, title: job.title, version: 1,
+  questions: [{ id: "returns", prompt: "Describe a return you resolved." }]
+};
+const application = {
+  id: id(30), first_name: "Synthetic", last_name: "Applicant", email: "synthetic@example.test",
+  phone: "812-555-0100", position_title: job.title, screening_version_id: questionnaire.id,
+  screening_answers: { returns: "Coordinated receiving and documented the refund." }
+};
+const candidate = { id: id(25), full_name: "Synthetic Applicant", email: application.email, phone: application.phone };
+
+test("public Careers and the legacy Returns URL submit versioned answers with a resume", async ({ page }) => {
+  const submissions = [];
+  const uploads = [];
+  await page.route("**/__screening_fixture", async route => {
+    const body = route.request().postDataJSON();
+    let data = null;
+    if (body.kind === "table") data = [job];
+    if (body.name === "read_screening_questionnaire") data = body.params.p_job === job.id || body.params.p_job === null ? questionnaire : null;
+    if (body.kind === "insert") submissions.push(body.rows[0]);
+    if (body.kind === "upload") uploads.push(body.path);
+    await route.fulfill({ json: { data } });
+  });
+
+  await page.goto("/careers?job=" + job.id);
+  await expect(page.getByLabel(questionnaire.questions[0].prompt)).toBeVisible();
+  await page.goto("/assessment/" + id(11));
+  await expect(page.getByText("This assessment is unavailable.")).toBeVisible();
+  await page.goto("/returns-assessment?utm_source=indeed");
+  await expect(page.getByRole("heading", { name: job.title })).toBeVisible();
+  await page.getByLabel("First Name *", { exact: true }).fill("Synthetic");
+  await page.getByLabel("Last Name *", { exact: true }).fill("Applicant");
+  await page.getByLabel("Email *", { exact: true }).fill(application.email);
+  await page.getByLabel("Phone Number *", { exact: true }).fill(application.phone);
+  await page.getByLabel(questionnaire.questions[0].prompt).fill(application.screening_answers.returns);
+  await page.getByLabel("Resume", { exact: true }).setInputFiles({
+    name: "synthetic.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-synthetic")
+  });
+  await page.getByRole("button", { name: "Apply for " + job.title }).click();
+  await expect(page.getByRole("heading", { name: "Application Received" })).toBeVisible();
+  expect(submissions).toHaveLength(1);
+  expect(submissions[0]).toMatchObject({
+    position_id: job.id, source: "indeed", screening_version_id: questionnaire.id,
+    screening_answers: application.screening_answers, resume_path: uploads[0]
+  });
+  expect(uploads[0]).toContain(submissions[0].id + "/");
+});
+
+test("recruiter publishes via Open Positions and saves evidence and follow-up across reload", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("synthetic-recruiter", "true"));
+  let config = null;
+  let record = null;
+  let draft = null;
+  await page.route("**/__screening_fixture", async route => {
+    const { name } = route.request().postDataJSON();
+    const data = name === "ats_admin_directory" ? { candidates: [candidate] } :
+      name === "ats_admin_requisitions" ? { requisitions: [req], assignments: [] } : [];
+    await route.fulfill({ json: { data } });
+  });
+  await page.route("**/api/ats-screening", async route => {
+    expect(route.request().headers().authorization).toBe("Bearer synthetic-ats-token");
+    const body = route.request().postDataJSON();
+    let result;
+    switch (body.action) {
+      case "postings": result = { postings: [job] }; break;
+      case "configuration": result = { position: config }; break;
+      case "questionnaire":
+        config = { job_id: body.jobId, draft: body.questions, published_id: body.publish ? questionnaire.id : null };
+        result = { position: config }; break;
+      case "applicants": result = { applicants: [{ application, case: record, hasResume: true }], nextOffset: null }; break;
+      case "sync":
+        record = { application_id: application.id, application, candidate_id: candidate.id, resume_path: "private/path",
+          questionnaire, interview: null, identity_state: "linked", revision: 0, review: {} };
+        result = { case: record }; break;
+      case "draft":
+        if (body.generate) draft = { experience: [{ observation: "Handled returns", quote: "Processed refunds" }],
+          missing_information: [], interview_questions: ["How do you verify a discrepancy?"] };
+        result = { draft }; break;
+      case "review":
+        expect(body.revision).toBe(record.revision);
+        record = { ...record, revision: record.revision + 1, review: body.review };
+        result = { case: record }; break;
+      default: throw new Error("Unexpected action " + body.action);
+    }
+    await route.fulfill({ json: result });
+  });
+  await page.goto("/ats");
+  await page.getByRole("button", { name: "Open Positions", exact: true }).click();
+  await page.getByRole("button", { name: new RegExp(job.title) }).click();
+  await page.getByLabel("Careers posting").selectOption(job.id);
+  await page.getByLabel("Start from a role template").selectOption("0");
+  await page.getByRole("button", { name: "Preview questionnaire" }).click();
+  await expect(page.getByRole("heading", { name: "Applicant preview" })).toBeVisible();
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByText("Draft saved.")).toBeVisible();
+  await page.getByRole("button", { name: "Publish questionnaire" }).click();
+  await expect(page.getByLabel("Shareable assessment link")).toHaveValue(new RegExp("/assessment/" + job.id));
+  async function openApplicant() {
+    await page.getByRole("button", { name: "Applicant Screening", exact: true }).click();
+    await page.getByRole("combobox", { name: "Position", exact: true }).selectOption(req.id);
+    await page.getByRole("button", { name: /Synthetic Applicant/ }).click();
+  }
+  await openApplicant();
+  await page.getByRole("button", { name: "Sync application", exact: true }).click();
+  await expect(page.getByText("Coordinated receiving and documented the refund.")).toBeVisible();
+  await page.getByRole("button", { name: "Generate visible evidence drafts" }).click();
+  await expect(page.getByText("Synthetic Applicant · Draft ready")).toBeVisible();
+  await page.getByRole("button", { name: /Synthetic Applicant/ }).click();
+  await expect(page.getByText("AI draft for recruiter verification")).toBeVisible();
+  await page.getByLabel("Verified resume evidence").fill("Recruiter confirmed order-resolution experience.");
+  await page.getByLabel("Recruiter notes").fill("Review complete.");
+  await page.getByLabel("Follow-up decision").selectOption("interview");
+  await page.getByLabel("Mark screening review complete").check();
+  await page.getByRole("button", { name: "Save recruiter review" }).click();
+  await expect(page.getByRole("button", { name: /Synthetic Applicant.*Review complete/ })).toBeVisible();
+  await page.reload();
+  await openApplicant();
+  await expect(page.getByLabel("Verified resume evidence")).toHaveValue("Recruiter confirmed order-resolution experience.");
+  await expect(page.getByLabel("Follow-up decision")).toHaveValue("interview");
+  await page.getByLabel("Review status").selectOption("pending");
+  await expect(page.getByText("No applications match this page and filter.")).toBeVisible();
+});
+
+test("signed-out visitors see the existing ATS sign-in boundary", async ({ page }) => {
+  await page.goto("/ats");
+  await expect(page.getByRole("heading", { name: "Recruiter administrator sign-in" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Applicant Screening" })).toHaveCount(0);
+});

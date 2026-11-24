@@ -4,6 +4,7 @@ create table public.screening_positions (
   job_id uuid primary key references public.job_postings(id),
   requisition_id uuid unique not null,
   draft jsonb,
+  public_slug text unique,
   published_id uuid,
   updated_by uuid not null
 );
@@ -35,12 +36,12 @@ alter table public.candidate_applications
 create function public.read_screening_questionnaire(p_job uuid default null)
 returns jsonb language sql stable security definer set search_path='' as $$
   select jsonb_build_object('id',v.id,'job_id',j.id,'title',j.title,
-    'version',v.version,'questions',v.questions)
+    'version',v.version,'questions',v.questions,'hours',j.hours,'pay',j.pay,
+    'location',j.location,'description',j.description)
   from public.job_postings j
   join public.screening_positions p on p.job_id=j.id
   join public.screening_versions v on v.id=p.published_id
-  where j.is_active and (j.id=p_job or (p_job is null and
-    j.title='Customer Service & Returns Specialist — Compliance Support'))
+  where j.is_active and (j.id=p_job or (p_job is null and p.public_slug='returns'))
   order by j.created_at desc, j.id limit 1
 $$;
 
@@ -60,8 +61,10 @@ begin
       <> jsonb_array_length(p_questions) then
     raise exception 'Invalid question IDs or prompts' using errcode='22023';
   end if;
-  insert into public.screening_positions(job_id,requisition_id,draft,updated_by)
-    values(p_job,p_requisition,p_questions,p_actor)
+  insert into public.screening_positions(job_id,requisition_id,draft,updated_by,public_slug)
+    select p_job,p_requisition,p_questions,p_actor,
+      case when title='Customer Service & Returns Specialist — Compliance Support' then 'returns' end
+    from public.job_postings where id=p_job
     on conflict(job_id) do nothing;
   select * into strict current_position from public.screening_positions where job_id=p_job for update;
   if current_position.requisition_id<>p_requisition then
@@ -92,13 +95,22 @@ begin
   if tg_op='UPDATE' then
     if new.screening_version_id is distinct from old.screening_version_id
       or new.screening_answers is distinct from old.screening_answers
-      or (old.screening_version_id is not null and new.position_id is distinct from old.position_id) then
+      or (old.screening_version_id is not null and
+        (new.position_id,new.position_title,new.first_name,new.last_name,new.email,new.phone,new.resume_path)
+          is distinct from
+        (old.position_id,old.position_title,old.first_name,old.last_name,old.email,old.phone,old.resume_path)) then
       raise exception 'Submitted screening responses are immutable' using errcode='22023';
     end if;
     return new;
   end if;
   if new.screening_version_id is null then
-    if new.screening_answers is not null then
+    -- Allow the existing Returns form during the staged migration/deploy window.
+    if new.screening_answers is not null and not (
+      jsonb_typeof(new.screening_answers)='object' and pg_column_size(new.screening_answers)<=24000 and
+      exists (select 1 from public.job_postings j left join public.screening_positions p on p.job_id=j.id
+        where j.id=new.position_id and j.is_active and p.published_id is null
+          and j.title='Customer Service & Returns Specialist — Compliance Support')
+    ) then
       raise exception 'A questionnaire version is required' using errcode='22023';
     end if;
     return new;

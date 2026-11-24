@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { track } from "@vercel/analytics";
 import { supabase } from "./lib/supabaseClient";
@@ -53,6 +53,7 @@ const initialForm = {
 
 export default function CareersPage({ assessment = false }) {
   const { jobId } = useParams();
+  const returnsAssessment = assessment && !jobId;
   const [questionnaireState, setQuestionnaireState] = useState(null);
   const [answerState, setAnswerState] = useState(null);
   const [reload, setReload] = useState(0);
@@ -125,11 +126,12 @@ export default function CareersPage({ assessment = false }) {
     };
   }, [assessment]);
 
-  const completion = useMemo(() => {
-    const required = ["firstName", "lastName", "email", "phone", "positionTitle"];
-    const filled = required.filter((key) => form[key]?.trim?.()).length;
-    return Math.round((filled / required.length) * 100);
-  }, [form]);
+  const completion = (() => {
+    const values = [form.firstName, form.lastName, form.email, form.phone, position.title,
+      ...(questionnaire?.data?.questions ?? []).map(question => answers[question.id] ?? "")];
+    if (returnsAssessment) values.push(form.resumeFile?.name ?? "");
+    return Math.round((values.filter(value => value.trim()).length / values.length) * 100);
+  })();
 
   const updateField = (event) => {
     const { name, value, type, files } = event.target;
@@ -181,6 +183,11 @@ export default function CareersPage({ assessment = false }) {
     setSubmitStatus("loading");
     setSubmitMessage("");
 
+    if (returnsAssessment && !form.resumeFile) {
+      setSubmitStatus("error");
+      setSubmitMessage("Upload your resume to complete the Returns assessment.");
+      return;
+    }
     if (form.resumeFile) {
       const extension = form.resumeFile.name.split(".").pop()?.toLowerCase();
       const allowedExtensions = ["pdf", "doc", "docx"];
@@ -210,7 +217,7 @@ export default function CareersPage({ assessment = false }) {
       return;
     }
     const trackingParams = new URLSearchParams(window.location.search);
-    const applicationSource = trackingParams.get("utm_source") || "direct_or_unknown";
+    const applicationSource = trackingParams.get("utm_source") || (returnsAssessment ? "indeed_followup" : "direct_or_unknown");
     const utmMedium = trackingParams.get("utm_medium");
     const utmCampaign = trackingParams.get("utm_campaign");
     const utmContent = trackingParams.get("utm_content");
@@ -246,7 +253,7 @@ export default function CareersPage({ assessment = false }) {
       if (error.code === "22023" && error.message.startsWith("The questionnaire changed")) {
         setReload(value => value + 1);
       }
-      setSubmitMessage(error.code === '22023'  ? error.message : "Something went wrong submitting your application. Please try again or email careers@join-orion.com.");
+      setSubmitMessage(error.code === '22023' ? error.message : "Something went wrong submitting your application. Please try again or email careers@join-orion.com.");
       return;
     }
 
@@ -392,6 +399,13 @@ export default function CareersPage({ assessment = false }) {
                 <div className="mb-6 flex items-start justify-between gap-4">
                   <div>
                     <h2 className="text-2xl font-black sm:text-3xl">{assessment ? position.title : "Apply to Orion"}</h2>
+                    {assessment && <div className="mt-3 text-sm text-white/80">
+                      <p>{[questionnaire.data.location, questionnaire.data.hours, questionnaire.data.pay].filter(Boolean).join(" · ")}</p>
+                      {questionnaire.data.description && <details className="mt-2">
+                        <summary className="cursor-pointer font-semibold text-amber-300">Job description</summary>
+                        <p className="mt-2 whitespace-pre-wrap">{questionnaire.data.description}</p>
+                      </details>}
+                    </div>}
                     {!position.id && (
                       <p className="mt-3 text-sm text-white/78 sm:text-base">
                         Don&apos;t see your role? Submit a general application and we&apos;ll keep it on file.
@@ -456,7 +470,7 @@ export default function CareersPage({ assessment = false }) {
                     <div>
                       <h3 className="font-black text-amber-300">Upload Resume</h3>
                       <p className="mt-1 text-sm leading-6 text-white/60">
-                        PDF, DOC, or DOCX. Up to 10MB.
+                        PDF, DOC, or DOCX. Up to 10MB.{returnsAssessment && " Required for the Returns assessment."}
                       </p>
                     </div>
                   </div>
@@ -467,6 +481,7 @@ export default function CareersPage({ assessment = false }) {
                       name="resumeFile"
                       onChange={updateField}
                       accept=".pdf,.doc,.docx"
+                      required={returnsAssessment}
                       className="w-full rounded-sm border border-white/14 bg-white/[0.075] px-4 py-3 text-sm text-white file:mr-4 file:rounded file:border-0 file:bg-amber-400 file:px-4 file:py-2 file:font-bold file:text-black"
                     />
                   </label>

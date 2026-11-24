@@ -1,4 +1,7 @@
 {
+  "functions": {
+    "api/ats-screening.js": { "maxDuration": 60 }
+  },
   "rewrites": [
     {
       "source": "/(.*)",
