@@ -362,13 +362,21 @@ test("recruiter bridge verifies ATS membership before copying an application res
   await worker("Bearer wrong");
   assert.equal(response.code, 401);
   assert.deepEqual(calls, []);
+  const publication = { ...req, body: { action: "questionnaire", jobId: id(10),
+    requisitionId: id(20), questions: first, publish: true } };
   process.env.VERCEL_ENV = "production";
+  await handler(publication, response);
+  assert.equal(response.code, 403);
+  assert.deepEqual(calls, []);
   await worker("Bearer " + settings.CRON_SECRET);
   assert.equal(response.code, 404);
   assert.deepEqual(calls, []);
   process.env.VERCEL_ENV = "preview";
   process.env.VITE_SUPABASE_URL = "https://ykftchggpdkmkpkbdbgs.supabase.co";
   process.env.ATS_SCREENING_STAGING_CAREERS_REF = "ykftchggpdkmkpkbdbgs";
+  await handler(publication, response);
+  assert.equal(response.code, 403);
+  assert.deepEqual(calls, []);
   await worker("Bearer " + settings.CRON_SECRET);
   assert.equal(response.code, 503);
   assert.deepEqual(calls, []);

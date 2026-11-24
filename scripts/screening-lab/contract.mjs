@@ -25,6 +25,43 @@ const recruiterRpcs = {
 };
 export const interviewArguments = "p_candidate_id uuid, p_position_title text, p_interview_date date, p_start_time text, p_end_time text, p_interview_format text, p_interview_stage text";
 
+const recruiterOnly = ["ats_admin_assign_requisition", "ats_admin_create_interview", "ats_admin_record_resume",
+  "ats_admin_resumes", "ats_admin_save_manager_feedback", "ats_is_recruiter_admin"];
+const servicesOnly = ["ats_service_sync_returns", "ats_service_returns_resume_imported"];
+
+export function compareSecurity(snapshot) {
+  const blockers = [];
+  if (snapshot.anonSchemaUsage !== false) blockers.push("Expected anonymous ats_dev USAGE to be denied.");
+  for (const table of Object.keys(columns)) {
+    const info = snapshot.tables[table];
+    if (!info) continue;
+    const authenticatedCrud = ["candidates", "interviews"].includes(table);
+    const expectRls = authenticatedCrud || table === "memberships";
+    if (info.rls !== expectRls) blockers.push(`RLS differs from the observed contract for ats_dev.${table}.`);
+    for (const role of ["anon", "authenticated"]) {
+      for (const operation of ["SELECT", "INSERT", "UPDATE", "DELETE"]) {
+        const expected = role === "authenticated" && (authenticatedCrud || (table === "memberships" && operation === "SELECT"));
+        if (info.crud?.[role]?.[operation] !== expected) {
+          blockers.push(`Expected ${role} ${operation} on ats_dev.${table} to be ${expected ? "granted" : "denied"}.`);
+        }
+      }
+    }
+  }
+  for (const [names, authenticated] of [[recruiterOnly, true], [servicesOnly, false]]) {
+    for (const name of names) {
+      const overloads = snapshot.rpcs.filter(rpc => rpc.name === name);
+      if (!overloads.length) blockers.push(`Missing security metadata for ${name}.`);
+      for (const rpc of overloads) {
+        if (rpc.anonExecute !== false || rpc.authenticatedExecute !== authenticated ||
+            (authenticated ? rpc.securityDefiner !== true : rpc.serviceExecute !== true)) {
+          blockers.push(`Execution contract differs for ${rpc.schema ?? "public"}.${name}(${rpc.arguments}).`);
+        }
+      }
+    }
+  }
+  return blockers;
+}
+
 export function compareContract(snapshot) {
   if (!snapshot?.tables || !Array.isArray(snapshot.rpcs)) throw new Error("Expected the ATS catalog metadata JSON object.");
   const blockers = [];
@@ -65,7 +102,7 @@ export function compareContract(snapshot) {
     }
     if (rpc.anonExecute) review.push(`Review the in-function anonymous access guard for ${name}.`);
   }
-  return { blockers, review };
+  return { blockers: [...blockers, ...compareSecurity(snapshot)], review };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

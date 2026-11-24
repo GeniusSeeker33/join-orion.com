@@ -30,6 +30,8 @@ const ats = client(labAtsUrl, atsInfo.SERVICE_ROLE_KEY);
 const applicant = client(labCareersUrl, careersInfo.ANON_KEY);
 const careersAdmin = client(labCareersUrl, careersInfo.ANON_KEY);
 const recruiter = client(labAtsUrl, atsInfo.ANON_KEY);
+const inactive = client(labAtsUrl, atsInfo.ANON_KEY);
+const atsAnon = client(labAtsUrl, atsInfo.ANON_KEY);
 const viewer = client(labAtsUrl, atsInfo.ANON_KEY);
 
 function take(result, label) {
@@ -78,8 +80,9 @@ async function setupUser(service, login, email) {
 }
 const recruiterUser = await setupUser(ats, recruiter, "recruiter@example.test");
 const viewerUser = await setupUser(ats, viewer, "viewer@example.test");
+const inactiveUser = await setupUser(ats, inactive, "inactive@example.test");
 const adminUser = await setupUser(careers, careersAdmin, "careers-admin@example.test");
-take(await ats.rpc("screening_lab_setup", { p_recruiter: recruiterUser.user.id, p_requisitions: requisitions }), "Seed seven ATS requisitions");
+take(await ats.rpc("screening_lab_setup", { p_recruiter: recruiterUser.user.id, p_inactive: inactiveUser.user.id, p_requisitions: requisitions }), "Seed seven ATS requisitions");
 take(await careers.from("admin_users").insert({ email: adminUser.email, role: "admin", active: true }), "Seed Careers admin");
 const referralCode = "ORION-SYNTHETICLAB";
 take(await careersAdmin.rpc("save_sales_referral_employee", {
@@ -87,9 +90,9 @@ take(await careersAdmin.rpc("save_sales_referral_employee", {
   p_started_on: "2020-01-01", p_last_employed_on: null, p_sales_eligible: true, p_sharing_enabled: true, p_code: referralCode
 }), "Create referral employee");
 
-async function invoke(body, { token = recruiterUser.token, expected = 200 } = {}) {
+async function invoke(body, { token = recruiterUser.token, expected = 200, method = "POST" } = {}) {
   const res = { setHeader() {}, status(code) { this.code = code; return this; }, json(value) { this.value = value; return this; } };
-  await handler({ method: "POST", headers: token ? { authorization: `Bearer ${token}` } : {}, body }, res);
+  await handler({ method, headers: token ? { authorization: `Bearer ${token}` } : {}, body }, res);
   assert.equal(res.code, expected, body.action + ": " + (res.value?.error ?? "unexpected status"));
   return res.value;
 }
@@ -97,6 +100,9 @@ async function invoke(body, { token = recruiterUser.token, expected = 200 } = {}
 await invoke({ action: "postings" }, { token: "", expected: 401 });
 await invoke({ action: "postings" }, { token: viewerUser.token, expected: 403 });
 await invoke({ action: "postings" }, { token: adminUser.token, expected: 403 });
+await invoke({ action: "postings" }, { token: inactiveUser.token, expected: 403 });
+await invoke({ action: "worker" }, { token: "", method: "GET", expected: 404 });
+await invoke({ action: "worker" }, { token: recruiterUser.token, method: "GET", expected: 404 });
 assert.ok((await ats.auth.getUser(adminUser.token)).error, "Careers JWT must fail at ATS Auth");
 assert.ok((await applicant.rpc("screening_lab_identity")).error, "Fixture marker must be private");
 assert.ok((await applicant.from("candidate_applications").select("id")).error, "Applicant PII must be private");
@@ -116,12 +122,24 @@ take(await applicant.storage.from("resumes").upload(sourcePath, resume, {
 }), "Upload a synthetic private resume");
 assert.ok((await applicant.storage.from("resumes").download(sourcePath)).error, "Careers upload must not grant read");
 
+const first = postings[0];
+const publish = { action: "questionnaire", jobId: first.id, requisitionId: first.requisition, questions: first.questions, publish: true };
+const draftPosition = (await invoke({ ...publish, publish: false })).position;
+assert.equal(draftPosition.published_id, null);
+for (const [token, expected] of [["", 401], [viewerUser.token, 403], [inactiveUser.token, 403], [adminUser.token, 403]]) {
+  await invoke(publish, { token, expected });
+}
+assert.equal(take(await applicant.rpc("read_screening_questionnaire", { p_job: first.id }), "Read unpublished questionnaire"), null);
+
 const imported = new Map();
 for (const posting of postings) {
   const { position } = await invoke({ action: "questionnaire", jobId: posting.id, requisitionId: posting.requisition,
     alternateRequisitionId: posting.alternate, questions: posting.questions, publish: true });
   const version = take(await applicant.rpc("read_screening_questionnaire", { p_job: posting.id }), "Read published questionnaire");
   assert.equal(version.id, position.published_id);
+  if (posting.id === first.id) {
+    assert.equal(take(await applicant.rpc("read_screening_questionnaire", { p_job: null }), "Read Returns alias").id, version.id);
+  }
   const sales = posting.title === "Sales Executive";
   if (sales) assert.equal(take(await applicant.rpc("validate_sales_referral", { p_code: referralCode, p_job: posting.id }), "Validate referral"), true);
   const newApplication = {
@@ -171,6 +189,13 @@ const scope = { applicationId: combined.application, requisitionId: combined.alt
 assert.ok(selected.resume_path);
 assert.ok((await viewer.storage.from("ats-screening-resumes").download(selected.resume_path)).error);
 await invoke({ action: "resume", ...scope }, { token: viewerUser.token, expected: 403 });
+for (const [actor, login] of [[viewerUser, viewer], [inactiveUser, inactive]]) {
+  await invoke({ action: "applicants", requisitionId: scope.requisitionId }, { token: actor.token, expected: 403 });
+  await invoke({ action: "resume", ...scope }, { token: actor.token, expected: 403 });
+  assert.ok((await login.storage.from("ats-screening-resumes").download(selected.resume_path)).error);
+}
+await invoke({ action: "resume", ...scope }, { token: "", expected: 401 });
+assert.ok((await atsAnon.storage.from("ats-screening-resumes").download(selected.resume_path)).error);
 const signed = await invoke({ action: "resume", ...scope });
 assert.equal(new URL(signed.url).origin, labAtsUrl);
 const download = await fetch(signed.url, { redirect: "error" });
@@ -206,18 +231,44 @@ try {
 
 const review = { notes: "Synthetic recruiter review", decision: "interview", interview_at: "2027-01-01T10:00:00.000Z",
   meeting_url: null, approved_evidence: "Verified from the synthetic resume", completed: true };
-await invoke({ action: "review", ...scope, revision: selected.revision, review, advancePipeline: true });
-take(await recruiter.rpc("ats_admin_create_interview", {
+const reviewAction = { action: "review", ...scope, revision: selected.revision, review, advancePipeline: true };
+for (const [token, expected] of [["", 401], [viewerUser.token, 403], [inactiveUser.token, 403], [adminUser.token, 403]]) {
+  await invoke(reviewAction, { token, expected });
+}
+const interviewArgs = {
   p_candidate_id: selected.candidate_id, p_position_title: "Warehouse Packer", p_interview_date: "2027-01-01",
   p_start_time: "10:00", p_end_time: "10:30", p_interview_format: "Video", p_interview_stage: "Video Interview"
-}), "Create fixture calendar interview");
+};
+for (const actor of [atsAnon, viewer, inactive]) {
+  assert.ok((await actor.rpc("ats_admin_create_interview", interviewArgs)).error, "Unauthorized native interview creation");
+  assert.ok((await actor.rpc("ats_screening_save_interview_review", {
+    p_actor: recruiterUser.user.id, p_application: scope.applicationId,
+    p_revision: selected.revision, p_review: review, p_advance: true
+  })).error, "Direct stage advancement must be denied");
+}
+assert.equal((take(await ats.rpc("screening_lab_pipeline"), "Check denied interview mutations").interviews ?? []).length, 0);
+await invoke(reviewAction);
+take(await recruiter.rpc("ats_admin_create_interview", interviewArgs), "Create fixture calendar interview");
+
+const legacyBucket = "ats-dev-resumes";
+const legacyPath = selected.candidate_id + "/legacy.docx";
+const buckets = take(await ats.storage.listBuckets(), "List local buckets");
+if (!buckets.some(bucket => bucket.id === legacyBucket)) {
+  take(await ats.storage.createBucket(legacyBucket, { public: false }), "Create synthetic legacy bucket");
+}
+take(await ats.storage.from(legacyBucket).upload(legacyPath, new Uint8Array(await resume.arrayBuffer()), {
+  contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+}), "Seed separately owned legacy attachment");
 take(await recruiter.auth.signOut(), "End recruiter session");
 const fresh = take(await recruiter.auth.signInWithPassword({ email: recruiterUser.email, password }), "Start new recruiter session");
 const reviewPage = await invoke({ action: "applicants", requisitionId: scope.requisitionId }, { token: fresh.session.access_token });
 assert.deepEqual(reviewPage.applicants[0].case.review, review);
 assert.equal((await invoke({ action: "draft", ...scope }, { token: fresh.session.access_token })).draft.experience[0].quote,
   "Synthetic inventory experience");
-await invoke({ action: "sync", ...scope }, { token: fresh.session.access_token });
+const repeated = await invoke({ action: "sync", ...scope }, { token: fresh.session.access_token });
+assert.equal(repeated.case.resume_path, selected.resume_path);
+const legacyFile = take(await ats.storage.from(legacyBucket).download(legacyPath), "Read unchanged legacy attachment");
+assert.deepEqual(new Uint8Array(await legacyFile.arrayBuffer()), new Uint8Array(await resume.arrayBuffer()));
 const pipeline = take(await ats.rpc("screening_lab_pipeline"), "Read fixture pipeline");
 assert.equal(pipeline.assignments.length, 7);
 assert.equal(pipeline.assignments.find(row => row.candidate_id === picker.case.candidate_id).requisition_id, combined.requisition);

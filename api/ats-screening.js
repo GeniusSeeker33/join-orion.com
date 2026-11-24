@@ -4,7 +4,7 @@ import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { isSplitPosting, isWarehouseSplitPair } from "../src/components/screening/routing.js";
-import { screeningIsolationError, screeningLabIdentityError } from "./_lib/screening-environment.js";
+import { isOperationalScreening, screeningIsolationError, screeningLabIdentityError } from "./_lib/screening-environment.js";
 import { evidenceFingerprint, extractResumeText, generateEvidence, hash } from "./_lib/screening-evidence.js";
 
 const id = z.uuid();
@@ -378,6 +378,9 @@ export default async function handler(req, res) {
   if (!token) return res.status(401).json({ error: "Sign in to the ATS." });
   const result = request.safeParse(req.body);
   if (!result.success) return res.status(400).json({ error: "Invalid screening request." });
+  if (result.data.action === "questionnaire" && result.data.publish && isOperationalScreening(process.env)) {
+    return res.status(403).json({ error: "Operational questionnaire publication is on hold." });
+  }
   try {
     const connection = clients(token);
     const labError = await screeningLabIdentityError(process.env);

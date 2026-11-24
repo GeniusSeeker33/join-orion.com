@@ -64,8 +64,13 @@ signing_keys_path = "./signing_keys.json"
     await file("../../docs/ats/ats-screening-phase2.sql"), await file("./ats-lab-adapters.sql")
   ];
   sources.push(`create function public.screening_lab_identity() returns jsonb
-language sql immutable set search_path='' as $$
-  select jsonb_build_object('realm','${realm}','run','${run}')
+language plpgsql stable set search_path='' as $$
+begin
+  if current_user <> 'service_role' then
+    raise insufficient_privilege using message = 'Screening lab identity is private';
+  end if;
+  return jsonb_build_object('realm','${realm}','run','${run}');
+end;
 $$;
 revoke all on function public.screening_lab_identity() from public,anon,authenticated;
 grant execute on function public.screening_lab_identity() to service_role;

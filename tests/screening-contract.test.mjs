@@ -66,3 +66,48 @@ test("catalog SQL reports the live-style interview shape while omitting candidat
     await db.close();
   }
 });
+
+test("catalog security gate rejects dangerous grants and unexpected overloads", async () => {
+  const { compareSecurity } = await import("../scripts/screening-lab/contract.mjs");
+  const deny = { SELECT: false, INSERT: false, UPDATE: false, DELETE: false };
+  const snapshot = {
+    anonSchemaUsage: true,
+    tables: { candidate_resumes: { rls: false, crud: { anon: deny, authenticated: { ...deny, SELECT: true } } } },
+    rpcs: [
+      { name: "ats_admin_create_interview", arguments: "unsafe overload", securityDefiner: true, anonExecute: true, authenticatedExecute: true },
+      { name: "ats_service_sync_returns", arguments: "jsonb", anonExecute: false, authenticatedExecute: true, serviceExecute: true },
+      { name: "ats_service_returns_resume_imported", arguments: "uuid", anonExecute: false, authenticatedExecute: false, serviceExecute: true }
+    ]
+  };
+  const blockers = compareSecurity(snapshot);
+  assert.ok(blockers.some(issue => issue.includes("USAGE")));
+  assert.ok(blockers.some(issue => issue.includes("authenticated SELECT on ats_dev.candidate_resumes")));
+  assert.ok(blockers.some(issue => issue.includes("unsafe overload")));
+  assert.ok(blockers.some(issue => issue.includes("ats_service_sync_returns")));
+  assert.ok(!blockers.some(issue => issue.includes("ats_service_returns_resume_imported")));
+});
+
+test("operational mapping inventory contains distinct UUIDs and keeps fixture and Picker/Packer identities separate", async () => {
+  const { postings, requisitions } = await import("../scripts/screening-lab/dataset.mjs");
+  const manifest = JSON.parse(await readFile(new URL("../docs/ats/screening-position-mapping.json", import.meta.url), "utf8"));
+  const jobs = manifest.positions.map(position => position.existingEnvironment.careersPostingId);
+  const targets = manifest.positions.flatMap(position => position.existingEnvironment.atsRequisitionIds);
+  assert.equal(jobs.length, 6);
+  assert.equal(targets.length, 7);
+  assert.equal(new Set([...jobs, ...targets]).size, 13);
+  for (const value of [...jobs, ...targets]) assert.match(value, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
+  const fixtureIds = new Set([...postings.map(posting => posting.id), ...requisitions.map(req => req.id)]);
+  assert.ok([...jobs, ...targets].every(value => !fixtureIds.has(value)));
+  for (const position of manifest.positions) {
+    const split = position.position === "Warehouse Picker/Packer";
+    assert.equal(position.routing, split ? "recruiter_selects_one" : "direct");
+    assert.equal(position.existingEnvironment.atsRequisitionIds.length, split ? 2 : 1);
+    assert.equal(position.staging.careersPostingId, null);
+    assert.deepEqual(position.staging.atsRequisitionIds, split ? [null, null] : [null]);
+    if (split) {
+      assert.deepEqual(position.requisitionTitleOrder, ["Warehouse Picker", "Warehouse Packer"]);
+      assert.deepEqual(position.existingEnvironment.atsRequisitionIds,
+        ["26e586a6-e810-48b9-b396-c3c2a1edaf34", "8b0b82d8-b6b5-451f-866c-e1b81ad15384"]);
+    }
+  }
+});

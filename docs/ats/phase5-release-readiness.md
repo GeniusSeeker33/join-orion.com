@@ -1,12 +1,12 @@
 # Phase 5 ATS compatibility and release readiness
 
-**Recommendation: hold the manual-only production pilot.** The local fixture is aligned to the reported live interview signature and still exercises the Screening overlays using real Auth, PostgREST and Storage. The maintained ATS definitions, all operational UUIDs, and write behavior of the deployed Returns RPC remain unverified. A fixture pass is evidence for the application contract, with a separate release gate for the operational baseline.
+**Recommendation: hold the manual-only production pilot.** The local fixture is aligned to the reported live interview signature and still exercises the Screening overlays using real Auth, PostgREST and Storage. The maintained ATS definitions and write behavior of the deployed Returns RPC remain unverified. The operational UUID inventory was completed in Phase 6. A fixture pass is evidence for the application contract, with a separate release gate for the operational baseline.
 
 ## Evidence and gaps
 
 The [Phase 4 baseline comment](https://github.com/GeniusSeeker33/join-orion.com/pull/16#issuecomment-7135051198) confirms an interview RPC with `text` start and end times, several native ATS columns, and the deployed Returns stack. The local fixture previously took SQL `time` arguments and now accepts the confirmed text-time shape. A catalog check exercises the actual PostgREST-facing signature in the Docker lab. It checks the production replay for the native resumes, interview and feedback RPCs used by the workspace, required columns, and the usable unique assignment key needed by the import’s `ON CONFLICT` clause.
 
-The accessible ATS development branches contain `docs/ats-development-schema-draft.sql`, which describes older `public.ats_*` tables. It is not the maintained `ats_dev` and `public.ats_admin_*` baseline. This workspace has no authorized operational SQL or Edge Function access. The public job feed returned HTTP 403. The earlier inventory confirms the Warehouse Middle UUID pair and the combined Picker/Packer split, but does not publish the other pairs. The [mapping manifest](screening-position-mapping.json) preserves the reported Returns requisition as incomplete and keeps synthetic and staging identifiers separate.
+The accessible ATS development branches contain `docs/ats-development-schema-draft.sql`, which describes older `public.ats_*` tables. It is not the maintained `ats_dev` and `public.ats_admin_*` baseline. This workspace has no authorized operational SQL or Edge Function access. The public job feed returned HTTP 403. The subsequent read-only inventory and [mapping manifest](screening-position-mapping.json) confirm six distinct operational posting UUIDs and seven distinct requisition UUIDs. Staging IDs remain unverified, and fixture IDs are synthetic.
 
 ## Supervised metadata and schema-only handoff
 
@@ -68,7 +68,7 @@ Have the owner inspect the deployed v9 source, `ats_service_sync_returns`, and t
 
 ## Approval and rollback gates
 
-A pilot can be reconsidered after the reviewed baseline passes in both disposable stacks, all six/seven IDs are verified, and the owner approves a narrow non-Returns scope. The exact operational changes needing approval are:
+A pilot can be reconsidered after the reviewed baseline passes in both disposable stacks, the owner approves linkage of the verified six/seven IDs, and the owner approves a narrow non-Returns scope. The exact operational changes needing approval are:
 
 - Applying the ATS Screening overlay and phase 2 SQL package, including new case/evidence/audit objects, RPC grants, and the private `ats-screening-resumes` bucket and access policy.
 - Applying Careers questionnaire, queue, and routing migrations in order, including applicant triggers and service-write grants. Evaluate the existing Returns repost and migration ledger separately before proposing any optional repost change. Obtain posting-owner approval for the Warehouse Middle wording amendment.

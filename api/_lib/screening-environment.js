@@ -1,5 +1,10 @@
 const operationalProjects = new Set(["ykftchggpdkmkpkbdbgs", "ofmqhrcmdrdrnvtnykyq"]);
 
+export function isOperationalScreening(env) {
+  return env.VERCEL_ENV === "production" || [env.VITE_SUPABASE_URL, env.VITE_MARKETING_DEV_SUPABASE_URL]
+    .some(url => operationalProjects.has(url?.match(/^https:\/\/([a-z0-9]{20})\.supabase\.co\/?$/)?.[1]));
+}
+
 export const labCareersUrl = "http://127.0.0.1:56321";
 export const labAtsUrl = "http://127.0.0.1:57321";
 export const labInferenceUrl = "http://127.0.0.1:5588/v1";
