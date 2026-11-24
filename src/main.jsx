@@ -23,6 +23,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/admin/recruiting" element={<RecruitingDashboard />} />
         <Route path="/ats" element={<ATSWorkspace />} />
+        <Route path="/assessment/:jobId" element={<CareersPage key="position-assessment" assessment />} />
+        <Route path="/returns-assessment" element={<CareersPage key="returns-assessment" assessment />} />
         <Route path="/careers" element={<CareersPage />} />
         <Route path="/sales-executive" element={<SalesExecutivePage />} />
       </Routes>
