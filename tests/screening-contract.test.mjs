@@ -48,6 +48,9 @@ test("catalog SQL reports the live-style interview shape while omitting candidat
   try {
     await db.exec(`create role anon; create role authenticated; create role service_role;
       create schema auth; create table auth.users(id uuid primary key);
+      create schema storage;
+      create table storage.buckets(id text primary key,name text,public boolean,file_size_limit int,allowed_mime_types text[]);
+      create table storage.objects(bucket_id text);
       create function auth.uid() returns uuid language sql as $$select null::uuid$$;`);
     await db.exec(await file("../scripts/screening-lab/ats-fixture.sql"));
     await db.exec(`insert into ats_dev.candidates(full_name) values('synthetic-row-marker');

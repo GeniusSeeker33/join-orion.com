@@ -12,12 +12,14 @@ create table ats_dev.candidates (
 );
 create table ats_dev.requisition_candidates (
   requisition_id uuid references ats_dev.requisitions(id), candidate_id uuid references ats_dev.candidates(id),
-  stage text not null, primary key (requisition_id,candidate_id)
+  stage text not null, candidate_outcome text, interview_disposition text,
+  primary key (requisition_id,candidate_id)
 );
 create table ats_dev.interviews (
   id uuid primary key default gen_random_uuid(), candidate_id uuid not null references ats_dev.candidates(id),
   position_title text not null, interview_date date not null, start_time time, end_time time,
-  interview_format text, interview_stage text
+  interview_format text, interview_stage text,
+  attendance_status text not null default 'unverified', source_event text
 );
 
 -- ATS UI RPCs below are fixture equivalents of operational RPCs that are maintained separately.
@@ -39,6 +41,16 @@ begin
   if not exists (select 1 from ats_dev.memberships where user_id=auth.uid() and role='recruiter_admin' and is_active) then
     raise insufficient_privilege;
   end if;
+  if not exists (select 1 from ats_dev.candidates where id=p_candidate_id) then
+    raise exception 'Candidate not found' using errcode='22023';
+  end if;
+  if (nullif(p_start_time,'') is not null and p_start_time !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$')
+    or (nullif(p_end_time,'') is not null and p_end_time !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$') then
+    raise exception 'Expected HH:MM' using errcode='22023';
+  end if;
+  if nullif(p_end_time,'')::time <= nullif(p_start_time,'')::time then
+    raise exception 'End time must follow start time' using errcode='22023';
+  end if;
   insert into ats_dev.interviews(candidate_id,position_title,interview_date,start_time,end_time,interview_format,interview_stage)
   values(p_candidate_id,p_position_title,p_interview_date,nullif(p_start_time,'')::time,nullif(p_end_time,'')::time,p_interview_format,p_interview_stage)
   returning id into result;
@@ -47,3 +59,18 @@ end
 $$;
 revoke all on function public.ats_admin_requisitions(),public.ats_admin_create_interview(uuid,text,date,text,text,text,text) from public,anon,authenticated;
 grant execute on function public.ats_admin_requisitions(),public.ats_admin_create_interview(uuid,text,date,text,text,text,text) to authenticated;
+
+-- Synthetic equivalent of the verified bucket boundary, local fixture only.
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+values ('ats-dev-resumes','ats-dev-resumes',false,10485760,
+  array['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document']);
+create function public.screening_fixture_is_recruiter() returns boolean
+language sql stable security definer set search_path='' as $$
+  select exists (select 1 from ats_dev.memberships where user_id=auth.uid() and role='recruiter_admin' and is_active)
+$$;
+revoke all on function public.screening_fixture_is_recruiter() from public,anon,authenticated;
+grant execute on function public.screening_fixture_is_recruiter() to authenticated;
+create policy fixture_legacy_resume_read on storage.objects for select to authenticated
+using (bucket_id='ats-dev-resumes' and public.screening_fixture_is_recruiter());
+create policy fixture_legacy_resume_insert on storage.objects for insert to authenticated
+with check (bucket_id='ats-dev-resumes' and public.screening_fixture_is_recruiter());

@@ -46,6 +46,8 @@ The API rejects questionnaire publication in the production runtime or against e
 
 ## Recruiter acceptance
 
+Phase 7 assigns Returns to the existing workflow. Use the [updated ownership acceptance steps](phase7-rehearsal.md#ownership-and-acceptance) before following this checklist.
+
 Use only disposable projects and synthetic submissions. Complete all steps for each destination in the matrix. This checklist prepares a future acceptance session, with no production publication or communications authorized.
 
 | Public questionnaire | ATS destination to verify |

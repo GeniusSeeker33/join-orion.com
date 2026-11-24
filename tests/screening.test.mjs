@@ -118,15 +118,15 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
       create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
       create table storage.buckets(id text primary key,name text,public boolean,file_size_limit int,allowed_mime_types text[]);
       create table ats_dev.memberships(user_id uuid,role text,is_active boolean);
-      create table ats_dev.requisitions(id uuid primary key);
+      create table ats_dev.requisitions(id uuid primary key,title text);
       create table ats_dev.candidates(id uuid primary key default gen_random_uuid(), full_name text not null,email text,phone text,application_source text);
       create table ats_dev.requisition_candidates(requisition_id uuid references ats_dev.requisitions,
-        candidate_id uuid references ats_dev.candidates,stage text,primary key(requisition_id,candidate_id));
+        candidate_id uuid references ats_dev.candidates,stage text,candidate_outcome text,interview_disposition text,primary key(requisition_id,candidate_id));
       create table ats_dev.employment(candidate_id uuid primary key references ats_dev.candidates, employment_status text);
       insert into ats_dev.memberships values('${id(1)}','recruiter_admin',true),('${id(2)}','viewer',true);
-      insert into ats_dev.requisitions values('${id(20)}'),('${id(21)}');
+      insert into ats_dev.requisitions values('${id(20)}','Sales'),('${id(21)}','Customer Service & Returns Specialist'),('${id(22)}','Production');
       insert into ats_dev.candidates values('${id(25)}','Synthetic Applicant','synthetic@example.test','(812) 555-0100','Manual');
-      insert into ats_dev.requisition_candidates values('${id(20)}','${id(25)}','hired');
+      insert into ats_dev.requisition_candidates(requisition_id,candidate_id,stage) values('${id(20)}','${id(25)}','hired');
       insert into ats_dev.employment values('${id(25)}','active');`);
     await db.exec(await migration("docs/ats/ats-screening-overlay.sql"));
     const atsUpgrade = await migration("docs/ats/ats-screening-phase2.sql");
@@ -149,8 +149,19 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
     assert.equal((await sync(source(id(30)))).candidate_id, id(25));
     assert.equal((await sync(source(id(30)))).candidate_id, id(25));
     await assert.rejects(db.query("select ats_screening_import($1,$2,$3,null,null)",
-      [id(1), id(21), JSON.stringify(source(id(30)))]), /already belongs to another requisition/);
+      [id(1), id(22), JSON.stringify(source(id(30)))]), /already belongs to another requisition/);
+    await assert.rejects(db.query("select ats_screening_import($1,$2,$3,null,null)",
+      [id(1), id(21), JSON.stringify(source(id(37)))]), /owned by the legacy engine/);
+    await assert.rejects(sync(source(id(38), { position_id: "db38820b-3d0b-4018-a7b1-8012b53ba996" })), /owned by the legacy engine/);
     assert.equal((await sync(source(id(33)), null, null)).candidate_id, id(25));
+    assert.equal((await sync(source(id(34), { email: "changed@example.test" }))).identity_state, "needs_review");
+    await db.exec("reset role");
+    await db.query("insert into ats_dev.candidates(full_name,email,phone) values('Synthetic Applicant','other@example.test','8125550100')");
+    await db.exec("set role service_role");
+    assert.equal((await sync(source(id(35)))).identity_state, "needs_review");
+    await db.exec("reset role");
+    await db.query("delete from ats_dev.candidates where email='other@example.test'");
+    await db.exec("set role service_role");
     const ambiguous = source(id(31), { first_name: "Different" });
     assert.equal((await sync(ambiguous)).identity_state, "needs_review");
     assert.equal((await sync(ambiguous, id(25))).candidate_id, id(25));
@@ -177,7 +188,17 @@ test("ATS sync is service-only, idempotent, identity-aware and stage-preserving"
       "select ats_screening_save_interview_review($1,$2,$3,$4,true) item",
       [id(1), application, revision, JSON.stringify(review)]
     );
-    await saveInterview(id(32), 0);
+    await db.exec("reset role");
+    for (const [outcome, disposition] of [["not_culture_fit", null], [null, "no_show_closed"]]) {
+      await db.query("update ats_dev.requisition_candidates set candidate_outcome=$2,interview_disposition=$3 where candidate_id=$1", [newId, outcome, disposition]);
+      await db.exec("set role service_role");
+      await saveInterview(id(32), outcome ? 0 : 1);
+      await db.exec("reset role");
+      assert.equal((await db.query("select stage from ats_dev.requisition_candidates where candidate_id=$1", [newId])).rows[0].stage, "new");
+    }
+    await db.query("update ats_dev.requisition_candidates set candidate_outcome=null,interview_disposition=null where candidate_id=$1", [newId]);
+    await db.exec("set role service_role");
+    await saveInterview(id(32), 2);
     await saveInterview(id(30), 1);
     const lease = () => db.query("select ats_screening_claim_evidence($1,$2) as item", [id(30), "digest"]);
     assert.ok((await lease()).rows[0].item.lease);
@@ -294,7 +315,7 @@ test("recruiter bridge verifies ATS membership before copying an application res
       return Response.json(null);
     }
     if (url.pathname === "/rest/v1/screening_positions") return Response.json([{
-      job_id: id(10), published_id: id(40), requisition_id: id(20), automation_enabled: true,
+      sync_owner: router.owner ?? "universal", job_id: id(10), published_id: id(40), requisition_id: id(20), automation_enabled: true,
       requires_routing: Boolean(router.split), alternate_requisition_id: router.split ? id(21) : null
     }]);
     if (url.pathname === "/rest/v1/screening_application_routes") {
@@ -365,6 +386,9 @@ test("recruiter bridge verifies ATS membership before copying an application res
   const publication = { ...req, body: { action: "questionnaire", jobId: id(10),
     requisitionId: id(20), questions: first, publish: true } };
   process.env.VERCEL_ENV = "production";
+  await handler(req, response);
+  assert.equal(response.code, 403);
+  assert.deepEqual(calls, []);
   await handler(publication, response);
   assert.equal(response.code, 403);
   assert.deepEqual(calls, []);
@@ -389,7 +413,17 @@ test("recruiter bridge verifies ATS membership before copying an application res
   assert.deepEqual(router.finished, [{ p_application: source.id, p_lease: id(90), p_result: "synced" }]);
   await worker("Bearer " + settings.CRON_SECRET);
   assert.deepEqual(response.body, { processed: 0, totals: {} });
+  router.finished.length = 0;
+  router.owner = "legacy_returns";
+  calls.length = 0;
+  await worker("Bearer " + settings.CRON_SECRET);
+  assert.deepEqual(response.body, { processed: 1, totals: { mapping_changed: 1 } });
+  assert.ok(!calls.includes("/rest/v1/candidate_applications"));
   router.scheduler = false;
+  await handler(req, response);
+  assert.equal(response.code, 409);
+  assert.ok(!calls.includes("/rest/v1/rpc/ats_screening_import"));
+  router.owner = "universal";
   router.duplicate = true;
   source = { ...source, id: id(31), resume_path: id(31) + "/resubmission.pdf" };
   await handler({ ...req, body: { ...req.body, applicationId: source.id } }, response);
@@ -453,10 +487,11 @@ test("combined postings wait for one immutable route and the worker skips unappr
       alter table job_postings add column created_at timestamptz default now(), add column hours text,
         add column pay text, add column location text, add column description text;
       alter table candidate_applications add column resume_path text, add column phone text, add column created_at timestamptz default now();
-      update job_postings set title='Warehouse Picker/Packer' where id='${id(10)}';`);
+      update job_postings set title='Warehouse Picker/Packer' where id='${id(10)}';
+      update job_postings set title='Customer Service & Returns Specialist — Compliance Support' where id='${id(11)}';`);
     for (const filename of [
       "20261124000000_screening_questionnaires.sql", "20261124010000_screening_sync_queue.sql",
-      "20261124020000_screening_routing.sql"
+      "20261124020000_screening_routing.sql", "20261124030000_screening_sync_ownership.sql"
     ]) await db.exec(await migration("supabase/migrations/" + filename));
     const write = (job, req, alternate) => db.query("select write_screening_routing($1,$2,$3,$4,true,$5)",
       [job, req, JSON.stringify(first), id(1), alternate]);
@@ -483,7 +518,9 @@ test("combined postings wait for one immutable route and the worker skips unappr
     assert.equal((await list(id(21))).total, 0);
     assert.deepEqual(await claim(), []);
     await db.exec("reset role");
-    await db.query("update screening_positions set automation_enabled=true where job_id=$1", [id(10)]);
+    await db.query("update screening_positions set automation_enabled=true");
+    assert.equal((await db.query("select automation_enabled,sync_owner from screening_positions where job_id=$1", [id(11)])).rows[0].automation_enabled, false);
+    assert.equal((await db.query("select count(*)::int n from screening_sync_queue where application_id=$1", [id(31)])).rows[0].n, 0);
     await db.exec("set role service_role");
     assert.deepEqual(await claim(), []);
     await assert.rejects(choose(id(30), id(11), id(22)), /Unverified/);

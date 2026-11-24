@@ -2,6 +2,8 @@
 
 **Recommendation: hold the manual-only production pilot.** The local fixture is aligned to the reported live interview signature and still exercises the Screening overlays using real Auth, PostgREST and Storage. The maintained ATS definitions and write behavior of the deployed Returns RPC remain unverified. The operational UUID inventory was completed in Phase 6. A fixture pass is evidence for the application contract, with a separate release gate for the operational baseline.
 
+See the [Phase 7 ownership and private rehearsal handoff](phase7-rehearsal.md) for the newer operational review and pilot hold.
+
 ## Evidence and gaps
 
 The [Phase 4 baseline comment](https://github.com/GeniusSeeker33/join-orion.com/pull/16#issuecomment-7135051198) confirms an interview RPC with `text` start and end times, several native ATS columns, and the deployed Returns stack. The local fixture previously took SQL `time` arguments and now accepts the confirmed text-time shape. A catalog check exercises the actual PostgREST-facing signature in the Docker lab. It checks the production replay for the native resumes, interview and feedback RPCs used by the workspace, required columns, and the usable unique assignment key needed by the import’s `ON CONFLICT` clause.

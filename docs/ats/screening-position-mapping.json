@@ -27,7 +27,8 @@
           null
         ],
         "status": "unverified"
-      }
+      },
+      "syncOwner": "legacy_returns"
     },
     {
       "position": "Warehouse Middle (Hybrid Maintenance)",
@@ -45,7 +46,8 @@
           null
         ],
         "status": "unverified"
-      }
+      },
+      "syncOwner": "universal"
     },
     {
       "position": "Warehouse Picker/Packer",
@@ -69,7 +71,8 @@
       "requisitionTitleOrder": [
         "Warehouse Picker",
         "Warehouse Packer"
-      ]
+      ],
+      "syncOwner": "universal"
     },
     {
       "position": "Production Assistant",
@@ -87,7 +90,8 @@
           null
         ],
         "status": "unverified"
-      }
+      },
+      "syncOwner": "universal"
     },
     {
       "position": "Cerakote Applicator",
@@ -105,7 +109,8 @@
           null
         ],
         "status": "unverified"
-      }
+      },
+      "syncOwner": "universal"
     },
     {
       "position": "Sales Executive",
@@ -123,7 +128,8 @@
           null
         ],
         "status": "unverified"
-      }
+      },
+      "syncOwner": "universal"
     }
   ],
   "verification": {

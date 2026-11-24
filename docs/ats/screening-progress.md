@@ -173,3 +173,7 @@ See the [ATS compatibility and release-readiness report](phase5-release-readines
 ## Phase 6 security and acceptance gate
 
 The operational UUID inventory is complete as metadata, and linkage/publication still requires approval. See the [security contract, private baseline collection, legacy checklist and recruiter acceptance plan](phase6-operational-security.md). The manual-only pilot remains on hold pending reviewed maintained-schema replay, live write-contract reconciliation and owner approval.
+
+## Phase 7 Returns ownership and operational rehearsal
+
+The verified operational inventory remains six postings and seven requisitions. Returns remains with the existing workflow and five-minute scheduler. The universal eligibility boundary covers the other five postings and six requisitions. The manual-only production pilot, production publication, and universal worker activation remain on hold. See the [private schema handoff, recruiter acceptance steps, and reviewed behavior](phase7-rehearsal.md).

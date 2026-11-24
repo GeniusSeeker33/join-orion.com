@@ -176,7 +176,19 @@ async function evidence(ats, record, actor, generate) {
   }
 }
 
+const legacyReturnsPosting = "db38820b-3d0b-4018-a7b1-8012b53ba996";
+const legacyReturnsRequisition = "a822e721-4d9e-439d-83c8-a1a0a41efbe6";
+
+function universalMapping(position, requisitionId) {
+  return position?.sync_owner === "universal" && position.job_id !== legacyReturnsPosting &&
+    requisitionId !== legacyReturnsRequisition;
+}
+
 async function syncApplication({ careers, ats }, position, applicationId, actor, candidateId, requisitionId = position.requisition_id) {
+  if (!universalMapping(position, requisitionId)) {
+    throw new ScreeningError(409, "This posting is outside universal synchronization. Use the legacy Returns workflow for Returns.");
+  }
+  if (!position.published_id) throw new ScreeningError(409, "Publish the approved questionnaire before synchronizing applications.");
   const source = await query(careers.from("candidate_applications").select("*")
     .eq("id", applicationId).eq("position_id", position.job_id).maybeSingle());
   if (!source) throw new ScreeningError(404, "Application not found for this posting.");
@@ -214,8 +226,8 @@ async function scheduledSync(req, res) {
     let result;
     try {
       const position = await query(careers.from("screening_positions")
-        .select("job_id,requisition_id,alternate_requisition_id,published_id,requires_routing,automation_enabled").eq("job_id", entry.job_id).maybeSingle());
-      if (!position?.automation_enabled || !position.published_id ||
+        .select("job_id,requisition_id,alternate_requisition_id,published_id,requires_routing,automation_enabled,sync_owner").eq("job_id", entry.job_id).maybeSingle());
+      if (!universalMapping(position, entry.requisition_id) || !position.automation_enabled || !position.published_id ||
         ![position.requisition_id, position.alternate_requisition_id].includes(entry.requisition_id)) {
         result = "mapping_changed";
       } else {
@@ -276,7 +288,7 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
     if (body.action === "configuration") return { position };
     if (!position) throw new ScreeningError(404, "Link a Careers posting in Open Positions first.");
     if (body.action === "route") {
-      if (!position.requires_routing || position.requisition_id !== body.requisitionId ||
+      if (!universalMapping(position, body.destinationId) || !position.requires_routing || position.requisition_id !== body.requisitionId ||
           !position.alternate_requisition_id ||
           ![position.requisition_id, position.alternate_requisition_id].includes(body.destinationId)) {
         throw new ScreeningError(409, "Select a configured destination from the primary routing queue.");
@@ -297,6 +309,9 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
       return { destination };
     }
     if (body.action === "applicants") {
+      if (!universalMapping(position, body.requisitionId)) {
+        throw new ScreeningError(409, "Applications for this position are handled by the legacy Returns workflow.");
+      }
       const [scoped, reviewed] = await Promise.all([
         query(careers.rpc("list_routed_screening_applicants", {
           p_job: position.job_id, p_requisition: body.requisitionId, p_offset: body.offset
@@ -344,6 +359,10 @@ async function dispatch(body, { careers, ats, recruiter }, actor) {
   const record = await query(ats.from("ats_screening_cases").select("*")
     .eq("application_id", body.applicationId).eq("requisition_id", body.requisitionId).maybeSingle());
   if (!record) throw new ScreeningError(404, "Sync this application first.");
+  const owner = await query(careers.from("screening_positions").select("job_id,sync_owner").eq("job_id", record.job_id).maybeSingle());
+  if (!universalMapping(owner, record.requisition_id)) {
+    throw new ScreeningError(409, "Use the legacy Returns workflow for this application.");
+  }
   if (body.action === "review") {
     return { case: await query(ats.rpc("ats_screening_save_interview_review", {
       p_actor: actor, p_application: record.application_id, p_revision: body.revision,
@@ -380,6 +399,9 @@ export default async function handler(req, res) {
   if (!result.success) return res.status(400).json({ error: "Invalid screening request." });
   if (result.data.action === "questionnaire" && result.data.publish && isOperationalScreening(process.env)) {
     return res.status(403).json({ error: "Operational questionnaire publication is on hold." });
+  }
+  if (isOperationalScreening(process.env) && ["sync", "route", "review"].includes(result.data.action)) {
+    return res.status(403).json({ error: "The operational Screening pilot is on hold." });
   }
   try {
     const connection = clients(token);

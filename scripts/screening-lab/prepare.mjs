@@ -58,7 +58,8 @@ signing_keys_path = "./signing_keys.json"
     await migration("20261116135929_sales_employee_referrals"),
     await migration("20261124000000_screening_questionnaires"),
     await migration("20261124010000_screening_sync_queue"),
-    await migration("20261124020000_screening_routing")
+    await migration("20261124020000_screening_routing"),
+    await migration("20261124030000_screening_sync_ownership")
   ] : [
     reviewed ?? await file("./ats-fixture.sql"), await file("../../docs/ats/ats-screening-overlay.sql"),
     await file("../../docs/ats/ats-screening-phase2.sql"), await file("./ats-lab-adapters.sql")

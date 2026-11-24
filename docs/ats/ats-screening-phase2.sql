@@ -6,6 +6,30 @@ create index if not exists ats_screening_resume_digest on public.ats_screening_c
   where resume_path is not null;
 create index if not exists ats_screening_review_status on public.ats_screening_cases(requisition_id,(review->>'completed'));
 
+-- Protect known operational IDs and canonical titles in disposable or reviewed baselines.
+create or replace function public.ats_screening_legacy_returns(p_job uuid,p_requisition uuid)
+returns boolean language sql stable set search_path='' as $$
+  select coalesce(p_job='db38820b-3d0b-4018-a7b1-8012b53ba996',false)
+    or coalesce(p_requisition='a822e721-4d9e-439d-83c8-a1a0a41efbe6',false)
+    or exists (select 1 from ats_dev.requisitions r where r.id=p_requisition
+      and lower(r.title) ~ '^[[:space:]]*customer service.*[[:<:]]returns[[:>:]]')
+$$;
+create or replace function public.ats_screening_enforce_case_owner() returns trigger
+language plpgsql security definer set search_path='' as $$
+begin
+  if (tg_op='UPDATE' and public.ats_screening_legacy_returns(old.job_id,old.requisition_id))
+    or public.ats_screening_legacy_returns(new.job_id,new.requisition_id) then
+    raise exception 'Returns synchronization is owned by the legacy engine' using errcode='22023';
+  end if;
+  return new;
+end
+$$;
+drop trigger if exists ats_screening_enforce_case_owner on public.ats_screening_cases;
+create trigger ats_screening_enforce_case_owner before insert or update on public.ats_screening_cases
+for each row execute function public.ats_screening_enforce_case_owner();
+revoke all on function public.ats_screening_legacy_returns(uuid,uuid),public.ats_screening_enforce_case_owner()
+  from public,anon,authenticated;
+
 create or replace function public.ats_screening_import(
   p_actor uuid,p_requisition uuid,p_application jsonb,p_questionnaire jsonb,p_candidate uuid default null
 ) returns jsonb language plpgsql security definer set search_path='' as $$
@@ -23,6 +47,9 @@ declare
 begin
   if p_actor is not null and not exists (select 1 from ats_dev.memberships where user_id=p_actor
     and is_active and role='recruiter_admin') then raise insufficient_privilege; end if;
+  if public.ats_screening_legacy_returns(job,p_requisition) then
+    raise exception 'Returns synchronization is owned by the legacy engine' using errcode='22023';
+  end if;
   perform pg_advisory_xact_lock(hashtextextended('ats_screening_identity_import',0));
   -- Coordinate identity checks with existing ATS writers, including manual intake.
   lock table ats_dev.candidates in share row exclusive mode;
@@ -117,7 +144,10 @@ begin
       raise exception 'Link the candidate and record an interview time before moving the pipeline' using errcode='22023';
     end if;
     update ats_dev.requisition_candidates set stage='interview'
-      where candidate_id=result.candidate_id and requisition_id=result.requisition_id and stage in ('new','screening');
+      where candidate_id=result.candidate_id and requisition_id=result.requisition_id and stage in ('new','screening')
+        -- Leave dispositions and recorded outcomes to the ATS outcome/closure workflow.
+        and nullif(candidate_outcome::text,'') is null
+        and nullif(interview_disposition::text,'') is null;
     if found then
       insert into public.ats_screening_audit(application_id,actor,action)
         values(p_application,p_actor,'interview_stage_confirmed');

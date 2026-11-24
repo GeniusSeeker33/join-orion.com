@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -115,12 +115,17 @@ assert.equal(take(await recruiter.rpc("ats_admin_requisitions"), "Read ATS requi
 console.log("Verified separate Auth realms and database role restrictions");
 
 const combined = postings.find(item => item.alternate);
-const resume = new Blob([await readFile(new URL("../../tests/fixtures/synthetic-resume.docx", import.meta.url))]);
+const docxMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const resume = new Blob([await readFile(new URL("../../tests/fixtures/synthetic-resume.docx", import.meta.url))], { type: docxMime });
 const sourcePath = combined.application + "/synthetic.docx";
-take(await applicant.storage.from("resumes").upload(sourcePath, resume, {
-  contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+take(await applicant.storage.from("resumes").upload(sourcePath, new Uint8Array(await resume.arrayBuffer()), {
+  contentType: docxMime
 }), "Upload a synthetic private resume");
 assert.ok((await applicant.storage.from("resumes").download(sourcePath)).error, "Careers upload must not grant read");
+const careersBucket = take(await careers.storage.getBucket("resumes"), "Check Careers bucket");
+assert.equal(careersBucket.public, false);
+assert.equal(careersBucket.file_size_limit, 10485760);
+take(await careersAdmin.storage.from("resumes").download(sourcePath), "Active Careers admin can read private upload");
 
 const first = postings[0];
 const publish = { action: "questionnaire", jobId: first.id, requisitionId: first.requisition, questions: first.questions, publish: true };
@@ -151,6 +156,15 @@ for (const posting of postings) {
   };
   take(await applicant.from("candidate_applications").insert(newApplication), "Submit synthetic application");
   assert.equal((await applicant.from("candidate_applications").insert(newApplication)).error?.code, "23505");
+  if (posting.id === first.id) {
+    assert.equal(position.sync_owner, "legacy_returns");
+    await invoke({ action: "sync", applicationId: posting.application, requisitionId: posting.requisition }, { expected: 409 });
+    await invoke({ action: "applicants", requisitionId: posting.requisition }, { expected: 409 });
+    assert.ok((await ats.rpc("ats_screening_import", { p_actor: null, p_requisition: posting.requisition,
+      p_application: newApplication, p_questionnaire: null })).error, "ATS must deny direct Returns imports");
+    continue;
+  }
+  assert.equal(position.sync_owner, "universal");
   let destination = posting.requisition;
   if (posting.alternate) {
     const waiting = await invoke({ action: "applicants", requisitionId: posting.requisition });
@@ -162,9 +176,28 @@ for (const posting of postings) {
     destination = posting.alternate;
   }
   const payload = { action: "sync", applicationId: posting.application, requisitionId: destination };
-  const [initial, repeated] = await Promise.all([invoke(payload), invoke(payload)]);
-  assert.equal(initial.case.candidate_id, repeated.case.candidate_id);
-  imported.set(posting.application, initial.case);
+  if (posting.alternate) {
+    const seeded = take(await ats.rpc("ats_screening_import", {
+      p_actor: recruiterUser.user.id, p_requisition: destination, p_application: newApplication, p_questionnaire: version
+    }), "Create case before registering its attachment");
+    const bytes = new Uint8Array(await resume.arrayBuffer());
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const path = `${seeded.candidate_id}/${digest}.docx`;
+    take(await ats.storage.from("ats-screening-resumes").upload(path, bytes, { contentType: docxMime }),
+      "Seed an upload that completed before attachment registration");
+    assert.ok((await ats.rpc("ats_screening_record_resume", {
+      p_application: posting.application, p_candidate: posting.application, p_actor: recruiterUser.user.id,
+      p_path: path, p_digest: digest, p_name: "synthetic.docx"
+    })).error, "Reject attachment registration with a mismatched candidate");
+    const [retry, duplicate] = await Promise.all([invoke(payload), invoke(payload)]);
+    assert.equal(retry.case.resume_path, path);
+    assert.equal(duplicate.case.resume_path, path);
+    imported.set(posting.application, retry.case);
+  } else {
+    const [initial, repeated] = await Promise.all([invoke(payload), invoke(payload)]);
+    assert.equal(initial.case.candidate_id, repeated.case.candidate_id);
+    imported.set(posting.application, initial.case);
+  }
 }
 // A second applicant deliberately chooses Picker while the first remains in Packer.
 const pickerApplication = "4ab00000-0000-4000-8000-000000000048";
@@ -182,7 +215,7 @@ const referrals = take(await careersAdmin.rpc("read_sales_referral_admin"), "Rea
 assert.equal(referrals.claims.length, 1);
 assert.equal(referrals.claims[0].captured_code, referralCode);
 assert.equal(take(await careers.rpc("claim_screening_sync", { p_limit: 8 }), "Check disabled mappings").length, 0);
-console.log("Published six versions, submitted and synced seven synthetic applications, verified routing and referral attribution");
+console.log("Published six local versions, excluded Returns from universal sync, and verified six eligible requisitions and referrals");
 
 const selected = imported.get(combined.application);
 const scope = { applicationId: combined.application, requisitionId: combined.alternate };
@@ -247,18 +280,30 @@ for (const actor of [atsAnon, viewer, inactive]) {
   })).error, "Direct stage advancement must be denied");
 }
 assert.equal((take(await ats.rpc("screening_lab_pipeline"), "Check denied interview mutations").interviews ?? []).length, 0);
+for (const invalid of [
+  { p_candidate_id: combined.application }, { p_start_time: "9:00" }, { p_end_time: "09:59" }
+]) {
+  assert.ok((await recruiter.rpc("ats_admin_create_interview", { ...interviewArgs, ...invalid })).error,
+    "Native interview validation must reject an unknown candidate, invalid time or reversed range");
+}
+take(await recruiter.rpc("ats_admin_create_interview", interviewArgs), "Create native calendar interview");
+const native = take(await ats.rpc("screening_lab_pipeline"), "Inspect native interview");
+assert.equal(native.interviews[0].attendance_status, "unverified");
+assert.equal(native.assignments.find(row => row.candidate_id === selected.candidate_id).stage, "new");
 await invoke(reviewAction);
-take(await recruiter.rpc("ats_admin_create_interview", interviewArgs), "Create fixture calendar interview");
 
 const legacyBucket = "ats-dev-resumes";
 const legacyPath = selected.candidate_id + "/legacy.docx";
-const buckets = take(await ats.storage.listBuckets(), "List local buckets");
-if (!buckets.some(bucket => bucket.id === legacyBucket)) {
-  take(await ats.storage.createBucket(legacyBucket, { public: false }), "Create synthetic legacy bucket");
-}
-take(await ats.storage.from(legacyBucket).upload(legacyPath, new Uint8Array(await resume.arrayBuffer()), {
-  contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+const legacyBucketInfo = take(await ats.storage.getBucket(legacyBucket), "Read legacy bucket metadata");
+assert.equal(legacyBucketInfo.public, false);
+assert.equal(legacyBucketInfo.file_size_limit, 10485760);
+take(await recruiter.storage.from(legacyBucket).upload(legacyPath, new Uint8Array(await resume.arrayBuffer()), {
+  contentType: docxMime
 }), "Seed separately owned legacy attachment");
+assert.ok((await viewer.storage.from(legacyBucket).download(legacyPath)).error);
+assert.ok((await inactive.storage.from(legacyBucket).download(legacyPath)).error);
+assert.ok((await atsAnon.storage.from(legacyBucket).download(legacyPath)).error);
+take(await recruiter.storage.from(legacyBucket).download(legacyPath), "Recruiter can read legacy attachment");
 take(await recruiter.auth.signOut(), "End recruiter session");
 const fresh = take(await recruiter.auth.signInWithPassword({ email: recruiterUser.email, password }), "Start new recruiter session");
 const reviewPage = await invoke({ action: "applicants", requisitionId: scope.requisitionId }, { token: fresh.session.access_token });
@@ -270,7 +315,8 @@ assert.equal(repeated.case.resume_path, selected.resume_path);
 const legacyFile = take(await ats.storage.from(legacyBucket).download(legacyPath), "Read unchanged legacy attachment");
 assert.deepEqual(new Uint8Array(await legacyFile.arrayBuffer()), new Uint8Array(await resume.arrayBuffer()));
 const pipeline = take(await ats.rpc("screening_lab_pipeline"), "Read fixture pipeline");
-assert.equal(pipeline.assignments.length, 7);
+assert.equal(pipeline.assignments.length, 6);
+assert.equal(pipeline.interviews[0].attendance_status, native.interviews[0].attendance_status);
 assert.equal(pipeline.assignments.find(row => row.candidate_id === picker.case.candidate_id).requisition_id, combined.requisition);
 assert.equal(pipeline.interviews.length, 1);
 assert.equal(pipeline.assignments.find(row => row.candidate_id === selected.candidate_id).stage, "interview");
